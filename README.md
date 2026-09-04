@@ -6,7 +6,7 @@
 
 Python simulation framework for the project in **TMR4240 Marine Control Systems I** (NTNU, Department of Marine Technology): design, implement, and validate a dynamic positioning (DP) system for NTNU's research vessel **R/V Gunnerus**. The vessel is a 3-DOF (surge, sway, yaw) maneuvering model from the [`mcsimpy`](https://github.com/NTNU-MCS/mcsimpy) toolbox; everything around it — simulation loop, actuators, logging, plotting, automated checks — is provided here. **You implement the DP system.**
 
-The project description (PDF) with all report tasks and mandatory simulations is on Canvas under the *Project* module. This README explains how the repository is organised, how to run it, and how the code maps onto the tasks in that document.
+The project description (PDF) with all report tasks and mandatory simulations is on Canvas under the *Project* module. This README explains how the repository is organised, how to run it, and how the code maps onto the tasks in that document..
 
 ---
 
