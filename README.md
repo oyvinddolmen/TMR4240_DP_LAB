@@ -6,7 +6,7 @@
 
 Python simulation framework for the project in **TMR4240 Marine Control Systems I** (NTNU, Department of Marine Technology): design, implement, and validate a dynamic positioning (DP) system for NTNU's research vessel **R/V Gunnerus**. The vessel is a 3-DOF (surge, sway, yaw) maneuvering model from the [`mcsimpy`](https://github.com/NTNU-MCS/mcsimpy) toolbox. Everything around it — the closed-loop engines, actuators, measurement layer, wave loads, logging, plotting and automated checks — is provided here. **You design and implement the DP system.**
 
-The project runs in **two parts of equal weight**, and Part 2 builds directly on Part 1:
+The project runs in **two parts**, and Part 2 builds directly on Part 1:
 
 | | Project Part 1 | Project Part 2 |
 | --- | --- | --- |
@@ -488,7 +488,7 @@ python check.py --part 2         # every Part 2 subsystem reports NOT IMPLEMENTE
 
 If you have uncommitted work you do not want to commit yet, `git stash` before the pull and `git stash pop` after it.
 
-**If the pull reports a conflict.** It can only happen in one of the three shared files, because those are the only ones the release changes. Git will say `CONFLICT (content): Merge conflict in <file>` and stop mid-merge. None of the three is yours, so take the release version:
+**If the pull reports a conflict.** For ordinary Part 1 work it can only happen in one of the three shared files, because those are the only ones the release changes. Git will say `CONFLICT (content): Merge conflict in <file>` and stop mid-merge. None of the three is yours, so take the release version:
 
 ```bash
 git checkout --theirs README.md check.py pyproject.toml   # only those listed as conflicted

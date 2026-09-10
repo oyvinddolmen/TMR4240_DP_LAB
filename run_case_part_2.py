@@ -76,7 +76,7 @@ SELECTED_OBSERVER = None
 # Initial observer error used by the convergence demonstration in Part 2,
 # Simulation 4.  The engine resets every observer at the TRUE initial pose, so
 # an estimate that starts on top of the truth has nothing to converge from.
-# The value below is an EXAMPLE (5 m north, 5 m south-west, 10 deg of heading):
+# The value below is an EXAMPLE (5 m north, 5 m west, 10 deg of heading):
 # choose your own, and say in the report what it is and why it is a fair test.
 OBSERVER_OFFSET = np.array([5.0, -5.0, 0.0, 0.0, 0.0, np.deg2rad(10.0)])
 
@@ -260,6 +260,17 @@ def sim4():
         plot_observer_error(logs).suptitle(
             f"Observer {kind}, offset start — estimation errors")
         out[(kind, "offset start")] = logs
+    # Stage (c) is the only part that needs the choice you make from the
+    # evidence above, so it is skipped until you have made it.  Stages (a) and
+    # (b) are returned either way: they are the measurements you select on.
+    if SELECTED_OBSERVER is None:
+        print("\nPart 2, Simulation 4: stages (a) and (b) are done and plotted, and "
+              "their logs are returned.\nCompare the observers on that evidence, set "
+              "SELECTED_OBSERVER at the top of run_case_part_2.py,\nthen run sim4 again "
+              "for stage (c), the raw-vs-observer closed loop."
+              "\n(In a notebook, restart the kernel or importlib.reload(rc) first, so the "
+              "new value is picked up.)")
+        return out
     # Closed loop: does the selected observer improve the DP system?
     for label, use_obs in (("raw measurements", False), (f"observer {selected_observer()}", True)):
         cfg = Part2SimConfig(dt=DT, T=600.0, use_observer=use_obs,

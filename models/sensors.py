@@ -3,11 +3,14 @@
 The observer receives pose measurements only (GNSS position, gyrocompass
 heading) — vessel velocities are NOT measured on board; estimating them from
 the pose is the observer's job.  A "measured" velocity is still generated
-here, but only for validation plots; it is never passed to an observer.  Only
-the no-observer baseline runs (Part 2, Simulations 2 and 3, and the raw
-closed-loop comparison of Simulation 4) feed the simulated velocity straight
-to the controller.  This is the idealised baseline that Simulation 4 asks you
-to compare with pose-only observer feedback.
+here and is never passed to an observer.  It has two uses: the validation
+plots, and the no-observer baseline runs (Part 2, Simulations 2 and 3, and the
+raw closed-loop comparison of Simulation 4), which feed it straight to the
+controller.  That baseline is the idealised one Simulation 4 asks you to
+compare with pose-only observer feedback: with noise off the velocity it uses
+equals the simulated velocity exactly, while with noise on (the extra-credit
+task) the baseline controller sees a NOISY velocity, which is part of what
+that comparison exposes.
 
 Measurement noise is switched on or off per simulation with
 ``Part2SimConfig(use_sensor_noise=...)`` — off by default, so the mandatory
@@ -25,8 +28,9 @@ from simulation.utils import wrap_angle_pi
 
 
 # Fixed 1-sigma measurement noise of the sensor suite (course parameters).
-# Pose: GNSS North/East and gyrocompass heading.  Velocity noise is used only
-# for validation plots — the observer never receives velocity measurements.
+# Pose: GNSS North/East and gyrocompass heading.  The observer never receives
+# a velocity measurement; the velocity noise below reaches the validation plots
+# and, in the no-observer baseline runs, the controller itself.
 SENSOR_ETA_STD = np.array([0.20, 0.20, 0.0, 0.0, 0.0, np.deg2rad(0.20)])
 SENSOR_NU_STD = np.array([0.02, 0.02, 0.0, 0.0, 0.0, np.deg2rad(0.05)])
 
