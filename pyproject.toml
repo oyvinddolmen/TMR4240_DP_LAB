@@ -18,4 +18,4 @@ dependencies = [
 ]
 
 [tool.setuptools]
-packages = ["models", "simulation", "part_1"]
+packages = ["models", "simulation", "part_1", "part_2"]
