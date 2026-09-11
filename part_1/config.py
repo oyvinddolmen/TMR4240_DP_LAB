@@ -25,7 +25,7 @@ so that every simulation can be reconfigured by editing this one file and
         Ki: np.ndarray = ...
         Kd: np.ndarray = ...
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 import numpy as np
@@ -41,7 +41,7 @@ class SimConfig:
     method: str = "Euler"
     use_reference: bool = True
     thruster_dynamics: bool = False  # Part 1: ideal actuators (no rate limits, no saturation)
-    bypass_actuators: bool = False   # apply tau_d directly (debug)
+    bypass_actuators: bool = True   # apply tau_d directly (debug)
 
 
 @dataclass
@@ -61,6 +61,16 @@ class RefAxisConfig:
     wn: float = 1.0                     # natural frequency [rad/s] (placeholder)
     zeta: float = 1.0                   # damping ratio [-]
     rate_limit: Optional[float] = None  # max |x_dot| (m/s or rad/s); None = off
+
+
+@dataclass
+class TuningParameters:
+    Kp: np.ndarray = field(default_factory=lambda: np.diag([1.0, 1.0]))
+    Ki: np.ndarray = field(default_factory=lambda: np.diag([0.1, 0.1]))
+    Kd: np.ndarray = field(default_factory=lambda: np.diag([1.0, 1.0]))
+    Kp_psi: float = 1.0
+    Ki_psi: float = 1.0
+    Kd_psi: float = 1.0
 
 
 def default_thrusters_gunnerus3() -> list[ThrusterConfig]:
