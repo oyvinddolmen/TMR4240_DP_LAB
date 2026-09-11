@@ -57,9 +57,12 @@ class DPController:
     """
 
     def __init__(self, *args, **kwargs):
+        # Tuning parameters
+        self.tuningParameters = TuningParameters()
+
         # Integral states
-        self.int_ned = np.zeros(2)
-        self.int_psi = 0.0
+        self.integral_ned = np.zeros(2)
+        self.integral_psi = 0.0
 
     def reset(self) -> None:
         """Optional: reset internal states (integrators, filters) before a run."""
@@ -99,11 +102,11 @@ class DPController:
         ])
 
         # Heading error wrapped to (-pi, pi]
-        e_psi = wrap_angle_pi(psi)
+        e_psi = wrap_angle_pi(psi_d - psi)
 
         # REGULATOR - integral effect
-        self.int_ned += e_ned * dt
-        self.int_psi += e_psi * dt
+        self.integral_ned += e_ned * dt
+        self.integral_psi += e_psi * dt
 
         # REGULATOR - derivative effect
         u = nu[0]
@@ -122,15 +125,15 @@ class DPController:
 
         # PID regulator for NED
         # north and east
-        F_ned_P = TuningParameters.Kp @ e_ned
-        F_ned_I = TuningParameters.Ki @ self.int_ned
-        F_ned_D = TuningParameters.Kd @ e_dot_ned
+        F_ned_P = self.tuningParameters.Kp @ e_ned
+        F_ned_I = self.tuningParameters.Ki @ self.integral_ned
+        F_ned_D = self.tuningParameters.Kd @ e_dot_ned
         F_ned = F_ned_P + F_ned_I + F_ned_D
 
         # yaw part:
-        Mz_P = TuningParameters.Kp_psi * e_psi
-        Mz_I = TuningParameters.Ki_psi * self.int_psi
-        Mz_D = TuningParameters.Kd_psi * e_dot_psi
+        Mz_P = self.tuningParameters.Kp_psi * e_psi
+        Mz_I = self.tuningParameters.Ki_psi * self.integral_psi
+        Mz_D = self.tuningParameters.Kd_psi * e_dot_psi
         Mz = Mz_P + Mz_I + Mz_D
 
 
@@ -144,5 +147,7 @@ class DPController:
         tau_d[0] = Fx
         tau_d[1] = Fy
         tau_d[5] = Mz
-                
+
+        # TODO: anti-integrator-windupø
+
         return tau_d
