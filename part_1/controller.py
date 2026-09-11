@@ -45,7 +45,8 @@ constructor defaults. Tuning only inside ``run_case_part1.py`` will pass your
 own runs but fail the checks.
 """
 import numpy as np
-
+from part_1.config import TuningParameters
+from simulation.utils import Rz, wrap_angle_pi, ned_to_body_xy
 
 class DPController:
     """
@@ -56,7 +57,9 @@ class DPController:
     """
 
     def __init__(self, *args, **kwargs):
-        pass
+        # Integral states
+        self.int_ned = np.zeros(2)
+        self.int_psi = 0.0
 
     def reset(self) -> None:
         """Optional: reset internal states (integrators, filters) before a run."""
@@ -69,10 +72,77 @@ class DPController:
         eta: np.ndarray,
         nu: np.ndarray,
         eta_ref: np.ndarray,
-        nu_ref: np.ndarray | None = None,
+        nu_ref: np.ndarray | None = None,   
         acc_ref: np.ndarray | None = None,
     ) -> np.ndarray:
         # TODO: Replace this placeholder with your DP controller.
         # Return the (6,) desired BODY wrench — fill in tau_d[0] = Fx,
         # tau_d[1] = Fy, tau_d[5] = Mz and leave the rest zero.
-        return np.zeros(6)
+
+        # NOTE: reference parameters comes in NED frame, eta and nu comes in BODY frame. Return tau_desired in BODY frame
+
+
+        # ---------- PID-REGULATOR ------------
+
+        # Extracting states:
+        N     = eta[0]
+        E     = eta[1]
+        psi   = eta[5]
+        N_d   = eta_ref[0]
+        E_d   = eta_ref[1]
+        psi_d = eta_ref[5]
+
+        # Position errors in NED frame:
+        e_ned = np.array([
+            N_d - N,
+            E_d - E
+        ])
+
+        # Heading error wrapped to (-pi, pi]
+        e_psi = wrap_angle_pi(psi)
+
+        # REGULATOR - integral effect
+        self.int_ned += e_ned * dt
+        self.int_psi += e_psi * dt
+
+        # REGULATOR - derivative effect
+        u = nu[0]
+        v = nu[1]
+        r = nu[5]
+
+        J = Rz(psi) 
+        nu_ned = J @ np.array([u, v, r]) # nu comes in BODY frame so must be transformed to NED
+        nu_ref_ned = np.array([
+            nu_ref[0],
+            nu_ref[1],
+            nu_ref[5]
+        ])
+        e_dot_ned = nu_ref_ned[:2] - nu_ned[:2]
+        e_dot_psi = nu_ref_ned[2] - nu_ned[2]
+
+        # PID regulator for NED
+        # north and east
+        F_ned_P = TuningParameters.Kp @ e_ned
+        F_ned_I = TuningParameters.Ki @ self.int_ned
+        F_ned_D = TuningParameters.Kd @ e_dot_ned
+        F_ned = F_ned_P + F_ned_I + F_ned_D
+
+        # yaw part:
+        Mz_P = TuningParameters.Kp_psi * e_psi
+        Mz_I = TuningParameters.Ki_psi * self.int_psi
+        Mz_D = TuningParameters.Kd_psi * e_dot_psi
+        Mz = Mz_P + Mz_I + Mz_D
+
+
+        # Transform the control input from NED -> BODY
+        F_body = ned_to_body_xy(F_ned[:2], psi)
+        Fx = F_body[0]
+        Fy = F_body[1]
+
+        # create return variable tau_desired
+        tau_d = np.zeros(6)
+        tau_d[0] = Fx
+        tau_d[1] = Fy
+        tau_d[5] = Mz
+                
+        return tau_d

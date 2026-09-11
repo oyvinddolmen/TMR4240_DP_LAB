@@ -63,6 +63,16 @@ class RefAxisConfig:
     rate_limit: Optional[float] = None  # max |x_dot| (m/s or rad/s); None = off
 
 
+@dataclass
+class TuningParameters:
+    Kp:     np.ndarray = np.diag([1.0, 1.0])
+    Ki:     np.ndarray = np.diag([1.0, 1.0])
+    Kd:     np.ndarray = np.diag([1.0, 1.0])
+    Kp_psi: float = 1.0
+    Ki_psi: float = 1.0
+    Kd_psi: float = 1.0
+
+
 def default_thrusters_gunnerus3() -> list[ThrusterConfig]:
     """Three-thruster Gunnerus layout from the project description (Table 3)."""
     return [
