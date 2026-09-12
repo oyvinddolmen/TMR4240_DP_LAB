@@ -64,9 +64,31 @@ class DPController:
         self.integral_ned = np.zeros(2)
         self.integral_psi = 0.0
 
+        # for anti integrator windup
+        self.last_tau_unsat = np.zeros(6)         # BODY
+
     def reset(self) -> None:
-        """Optional: reset internal states (integrators, filters) before a run."""
-        pass
+        self.integral_ned[:] = 0.0
+        self.integral_psi = 0.0
+        self.last_tau_unsat[:] = 0.0
+
+    def apply_external_aw(self, tau_applied, psi, dt):
+        # retrieve variables
+        Kaw = self.tuningParameters.Kaw
+        Kaw_psi = self.tuningParameters.Kaw_psi
+        tau_unsat = self.last_tau_unsat 
+
+        # difference between achievable and desired wrench
+        delta_tau_body = tau_applied - tau_unsat
+
+        # transform power and torque difference to NED since integrator part is in NED
+        delta_tau_3dof_ned = Rz(psi) @ delta_tau_body[[0, 1, 5]]
+        delta_F_NE = delta_tau_3dof_ned[:2]
+        delta_M_psi = delta_tau_3dof_ned[-1]
+
+        # add anti-windup part of the integrator equation
+        self.integral_ned += Kaw @ delta_F_NE * dt        # NORTH, EAST
+        self.integral_psi += Kaw_psi * delta_M_psi * dt   # psi
 
     def compute(
         self,
@@ -78,14 +100,12 @@ class DPController:
         nu_ref: np.ndarray | None = None,   
         acc_ref: np.ndarray | None = None,
     ) -> np.ndarray:
-        # TODO: Replace this placeholder with your DP controller.
-        # Return the (6,) desired BODY wrench — fill in tau_d[0] = Fx,
-        # tau_d[1] = Fy, tau_d[5] = Mz and leave the rest zero.
-
         # NOTE: reference parameters comes in NED frame, eta and nu comes in BODY frame. Return tau_desired in BODY frame
 
-
         # ---------- PID-REGULATOR ------------
+            # The PID-controller is a SISO for each state, meaning we have three PIDs, one for each state (N, E, psi).
+            # The controller calculates a desired wrench (force and torques) in the NED frame.
+            # The wrench is then transformed to BODY fram and sent to the thruster allocater
 
         # Extracting states:
         N     = eta[0]
@@ -143,11 +163,12 @@ class DPController:
         Fy = F_body[1]
 
         # create return variable tau_desired
-        tau_d = np.zeros(6)
+        tau_d = np.zeros(6)     # desired/unsaturated wrench in BODY
         tau_d[0] = Fx
         tau_d[1] = Fy
         tau_d[5] = Mz
 
-        # TODO: anti-integrator-windupø
+        # TODO: anti-integrator-windup
+        self.last_tau_unsat = tau_d.copy()      # desired tau in BODY
 
         return tau_d
