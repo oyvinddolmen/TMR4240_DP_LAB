@@ -65,14 +65,14 @@ class RefAxisConfig:
 
 @dataclass
 class TuningParameters:
-    Kp: np.ndarray = field(default_factory=lambda: np.diag([1.0, 1.0]))
-    Ki: np.ndarray = field(default_factory=lambda: np.diag([0.1, 0.1]))
-    Kd: np.ndarray = field(default_factory=lambda: np.diag([1.0, 1.0]))
-    Kp_psi:  float = 1.0
-    Ki_psi:  float = 0.1
-    Kd_psi:  float = 1.0
+    Kp: np.ndarray = field(default_factory=lambda: np.diag([300.0, 100.0]))
+    Ki: np.ndarray = field(default_factory=lambda: np.diag([0, 0]))
+    Kd: np.ndarray = field(default_factory=lambda: np.diag([90.0, 40.0]))
+    Kp_psi:  float = 200000.0
+    Ki_psi:  float = 0
+    Kd_psi:  float = 1000.0
     Kaw:     float = field(default_factory=lambda: np.diag([1.0, 1.0]))        # K_anti_windup for integrator
-    Kaw_psi: float = 0.1
+    Kaw_psi: float = 0
 
 
 def default_thrusters_gunnerus3() -> list[ThrusterConfig]:
