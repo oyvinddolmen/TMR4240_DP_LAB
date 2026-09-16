@@ -47,6 +47,8 @@ own runs but fail the checks.
 import numpy as np
 from part_1.config import TuningParameters
 from simulation.utils import Rz, wrap_angle_pi, ned_to_body_xy
+from scipy.linalg import solve_continuous_are
+
 
 class DPController:
     """
@@ -55,6 +57,7 @@ class DPController:
     Students may implement any type of controller (PID, LQR, backstepping,
     ...). Only compute() is required; everything else is optional.
     """
+    
 
     def __init__(self, *args, **kwargs):
         # Tuning parameters

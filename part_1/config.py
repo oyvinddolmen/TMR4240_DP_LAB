@@ -65,15 +65,27 @@ class RefAxisConfig:
 
 @dataclass
 class TuningParameters:
-    Kp: np.ndarray = field(default_factory=lambda: np.diag([300.0, 100.0]))
-    Ki: np.ndarray = field(default_factory=lambda: np.diag([0, 0]))
-    Kd: np.ndarray = field(default_factory=lambda: np.diag([90.0, 40.0]))
-    Kp_psi:  float = 200000.0
-    Ki_psi:  float = 0
-    Kd_psi:  float = 1000.0
+    # w_c = 0.12, zeta = 1
+    Kp: np.ndarray = field(default_factory=lambda: np.diag([8650, 10176]))
+    Ki: np.ndarray = field(default_factory=lambda: np.diag([207, 244]))
+    Kd: np.ndarray = field(default_factory=lambda: np.diag([144168, 169608]))
+    Kp_psi:  float = 7.8E5
+    Ki_psi:  float = 1.88E4
+    Kd_psi:  float = 1.3E7
     Kaw:     float = field(default_factory=lambda: np.diag([1.0, 1.0]))        # K_anti_windup for integrator
     Kaw_psi: float = 0
 
+    """
+    # w_c = 0.2, zeta = 1
+    Kp: np.ndarray = field(default_factory=lambda: np.diag([24028, 28268]))
+    Ki: np.ndarray = field(default_factory=lambda: np.diag([0, 0]))
+    Kd: np.ndarray = field(default_factory=lambda: np.diag([240280, 282680]))
+    Kp_psi:  float = 2.17E6
+    Ki_psi:  float = 0
+    Kd_psi:  float = 2.17E7
+    Kaw:     float = field(default_factory=lambda: np.diag([1.0, 1.0]))        # K_anti_windup for integrator
+    Kaw_psi: float = 0
+    """
 
 def default_thrusters_gunnerus3() -> list[ThrusterConfig]:
     """Three-thruster Gunnerus layout from the project description (Table 3)."""
