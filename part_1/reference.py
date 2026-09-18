@@ -72,6 +72,7 @@ class ReferenceModel:
         zeta_xy = self.cfg_xy.zeta
 
         # calculating x'' for North and East
+        # no need to rotate nu to NED frame, because nu_ref = [X_ref', Y_ref', psi_ref']
         for i in [0, 1]:
             error = eta_cmd[i] - self.eta_ref[i]
 
@@ -80,7 +81,7 @@ class ReferenceModel:
                 - 2.0 * zeta_xy * wn_xy * self.nu_ref[i]
             )
 
-            # forward euler to discretize 
+            # forward euler discretization
             self.nu_ref[i] += dt * self.acc_ref[i]
             self.eta_ref[i] += dt * self.nu_ref[i]
 
@@ -88,14 +89,10 @@ class ReferenceModel:
         wn_psi = self.cfg_psi.wn
         zeta_psi = self.cfg_psi.zeta
 
-        psi_error = wrap_angle_pi(
-        eta_cmd[5] - self.eta_ref[5]
-        )
-
-        psi_target = self.eta_ref[5] + psi_error
+        psi_error = wrap_angle_pi(eta_cmd[5] - self.eta_ref[5])
 
         self.acc_ref[5] = (
-            wn_psi**2 * (psi_target - self.eta_ref[5])
+            wn_psi**2 * psi_error
             - 2.0 * zeta_psi * wn_psi * self.nu_ref[5]
         )
 
