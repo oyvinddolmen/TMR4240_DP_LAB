@@ -28,10 +28,9 @@ model here directly enables velocity/acceleration feedforward there.
 """
 from typing import Tuple
 import numpy as np
-from simulation.utils import wrap_angle_pi
 
-# Per-axis tuning parameters live with the rest of the Part 1 configuration.
-from part_1.config import RefAxisConfig
+# Per-axis tuning parameters live with the rest of the Part 2 configuration.
+from part_2.config import RefAxisConfig
 
 
 class ReferenceModel:
@@ -64,47 +63,8 @@ class ReferenceModel:
     def step(
         self, t: float, dt: float, eta_cmd: np.ndarray
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        # Using the second-order low-pass filter from Part 1 task description
-        eta_cmd = np.asarray(eta_cmd, dtype=float).reshape(6)
-
-        # ------------------- North and East ------------------
-        wn_xy = self.cfg_xy.wn
-        zeta_xy = self.cfg_xy.zeta
-
-        # calculating x'' for North and East
-        for i in [0, 1]:
-            error = eta_cmd[i] - self.eta_ref[i]
-
-            self.acc_ref[i] = (
-                wn_xy**2 * error
-                - 2.0 * zeta_xy * wn_xy * self.nu_ref[i]
-            )
-
-            # forward euler to discretize 
-            self.nu_ref[i] += dt * self.acc_ref[i]
-            self.eta_ref[i] += dt * self.nu_ref[i]
-
-        # -------------------- Yaw -------------------------
-        wn_psi = self.cfg_psi.wn
-        zeta_psi = self.cfg_psi.zeta
-
-        psi_error = wrap_angle_pi(
-        eta_cmd[5] - self.eta_ref[5]
-        )
-
-        psi_target = self.eta_ref[5] + psi_error
-
-        self.acc_ref[5] = (
-            wn_psi**2 * (psi_target - self.eta_ref[5])
-            - 2.0 * zeta_psi * wn_psi * self.nu_ref[5]
-        )
-
-        # forward euler to discretize
-        self.nu_ref[5] += dt * self.acc_ref[5]
-        self.eta_ref[5] += dt * self.nu_ref[5]
-
-        return (
-            self.eta_ref.copy(),
-            self.nu_ref.copy(),
-            self.acc_ref.copy(),
-        )
+        # TODO: Replace this pass-through placeholder with your reference model.
+        self.eta_ref = np.asarray(eta_cmd, dtype=float).reshape(6).copy()
+        self.nu_ref = np.zeros(6)
+        self.acc_ref = np.zeros(6)
+        return self.eta_ref, self.nu_ref, self.acc_ref

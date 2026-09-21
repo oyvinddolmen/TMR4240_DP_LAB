@@ -28,9 +28,11 @@ import numpy as np
 class Current:
     """Template for student current model.
 
+    Part 2 reuses the Part 1 current model unchanged — paste yours in.
+
     Constructor contract — the automated checks (``python check.py``,
-    ``pytest``, ``notebooks/part_1_demo.ipynb``) construct your model with
-    this signature, so keep it working:
+    ``pytest``) and ``run_case_part_2.py`` construct your model with this
+    signature, so keep it working:
 
         Current(speed, beta, semantics=..., beta_end=..., duration=...)
 
@@ -41,9 +43,9 @@ class Current:
     semantics : ``"towards"`` (default) — ``beta`` is the direction the
         current flows to — or ``"from"`` — the direction it comes from.
     beta_end, duration : if given, the direction varies linearly from
-        ``beta`` to ``beta_end`` over ``duration`` seconds (Simulation 2),
-        then stays at ``beta_end``.  Constant direction if ``beta_end`` is
-        ``None``.
+        ``beta`` to ``beta_end`` over ``duration`` seconds (Part 1,
+        Simulation 2), then stays at ``beta_end``.  Constant direction if
+        ``beta_end`` is ``None``.
     """
 
     def __init__(self, speed: float = 0.0, beta: float = 0.0, *,
@@ -63,28 +65,6 @@ class Current:
         eta: np.ndarray,
         nu: np.ndarray,
     ) -> np.ndarray:
-        
-        # Start with the initial current direction
-        beta_t = self.beta
-
-        # If beta_end is specified, vary the direction linearly
-        # from beta to beta_end during the specified duration.
-        if self.beta_end is not None and self.duration > 0.0:
-            alpha = np.clip(t / self.duration, 0.0, 1.0)
-            beta_t = self.beta + alpha * (self.beta_end - self.beta)
-
-        # If beta describes where the current comes FROM,
-        # reverse the direction by 180 degrees.
-        if self.semantics == "from":
-            beta_t += np.pi
-
-        # Convert current speed and direction to NED components.
-        V_N = self.speed * np.cos(beta_t)
-        V_E = self.speed * np.sin(beta_t)
-
-        # Generalized current velocity in NED coordinates.
-        nu_c_ned = np.zeros(6)
-        nu_c_ned[0] = V_N
-        nu_c_ned[1] = V_E
-
-        return nu_c_ned
+        # TODO: Replace this placeholder with your current model.
+        # Default: no current.
+        return np.zeros(6)

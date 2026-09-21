@@ -25,7 +25,7 @@ so that every simulation can be reconfigured by editing this one file and
         Ki: np.ndarray = ...
         Kd: np.ndarray = ...
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 import numpy as np
@@ -41,7 +41,7 @@ class SimConfig:
     method: str = "Euler"
     use_reference: bool = True
     thruster_dynamics: bool = False  # Part 1: ideal actuators (no rate limits, no saturation)
-    bypass_actuators: bool = False   # apply tau_d directly (debug)
+    bypass_actuators: bool = True   # apply tau_d directly (debug)
 
 
 @dataclass
@@ -58,10 +58,34 @@ class RefAxisConfig:
     # TODO (students): wn below is a placeholder, NOT a tuned value. Choose
     # the natural frequency yourself and justify it in the report (see the
     # project text, Reference Model section).
-    wn: float = 1.0                     # natural frequency [rad/s] (placeholder)
+    wn: float = 0.2                     # natural frequency [rad/s] (placeholder)
     zeta: float = 1.0                   # damping ratio [-]
     rate_limit: Optional[float] = None  # max |x_dot| (m/s or rad/s); None = off
 
+
+@dataclass
+class TuningParameters:
+    # w_c = 0.12, zeta = 1
+    Kp: np.ndarray = field(default_factory=lambda: np.diag([8650, 10176]))
+    Ki: np.ndarray = field(default_factory=lambda: np.diag([100, 100]))
+    Kd: np.ndarray = field(default_factory=lambda: np.diag([144168, 169608]))
+    Kp_psi:  float = 7.8E5
+    Ki_psi:  float = 1.88E3
+    Kd_psi:  float = 1.3E7
+    Kaw:     float = field(default_factory=lambda: np.diag([1.0, 1.0]))        # K_anti_windup for integrator
+    Kaw_psi: float = 0
+
+    """
+    # w_c = 0.2, zeta = 1
+    Kp: np.ndarray = field(default_factory=lambda: np.diag([24028, 28268]))
+    Ki: np.ndarray = field(default_factory=lambda: np.diag([0, 0]))
+    Kd: np.ndarray = field(default_factory=lambda: np.diag([240280, 282680]))
+    Kp_psi:  float = 2.17E6
+    Ki_psi:  float = 0
+    Kd_psi:  float = 2.17E7
+    Kaw:     float = field(default_factory=lambda: np.diag([1.0, 1.0]))        # K_anti_windup for integrator
+    Kaw_psi: float = 0
+    """
 
 def default_thrusters_gunnerus3() -> list[ThrusterConfig]:
     """Three-thruster Gunnerus layout from the project description (Table 3)."""

@@ -45,6 +45,9 @@ constructor defaults. Tuning only inside ``run_case_part1.py`` will pass your
 own runs but fail the checks.
 """
 import numpy as np
+from part_1.config import TuningParameters
+from simulation.utils import Rz, wrap_angle_pi, ned_to_body_xy
+from scipy.linalg import solve_continuous_are
 
 
 class DPController:
@@ -54,13 +57,41 @@ class DPController:
     Students may implement any type of controller (PID, LQR, backstepping,
     ...). Only compute() is required; everything else is optional.
     """
+    
 
     def __init__(self, *args, **kwargs):
-        pass
+        # Tuning parameters
+        self.tuningParameters = TuningParameters()
+
+        # Integral states
+        self.integral_ned = np.zeros(2)
+        self.integral_psi = 0.0
+
+        # for anti integrator windup
+        self.last_tau_unsat = np.zeros(6)         # BODY
 
     def reset(self) -> None:
-        """Optional: reset internal states (integrators, filters) before a run."""
-        pass
+        self.integral_ned[:] = 0.0
+        self.integral_psi = 0.0
+        self.last_tau_unsat[:] = 0.0
+
+    def apply_external_aw(self, tau_applied, psi, dt):
+        # retrieve variables
+        Kaw = self.tuningParameters.Kaw
+        Kaw_psi = self.tuningParameters.Kaw_psi
+        tau_unsat = self.last_tau_unsat 
+
+        # difference between achievable and desired wrench
+        delta_tau_body = tau_applied - tau_unsat
+
+        # transform power and torque difference to NED since integrator part is in NED
+        delta_tau_3dof_ned = Rz(psi) @ delta_tau_body[[0, 1, 5]]
+        delta_F_NE = delta_tau_3dof_ned[:2]
+        delta_M_psi = delta_tau_3dof_ned[-1]
+
+        # add anti-windup part of the integrator equation
+        self.integral_ned += Kaw @ delta_F_NE * dt        # NORTH, EAST
+        self.integral_psi += Kaw_psi * delta_M_psi * dt   # psi
 
     def compute(
         self,
@@ -69,10 +100,78 @@ class DPController:
         eta: np.ndarray,
         nu: np.ndarray,
         eta_ref: np.ndarray,
-        nu_ref: np.ndarray | None = None,
+        nu_ref: np.ndarray | None = None,   
         acc_ref: np.ndarray | None = None,
     ) -> np.ndarray:
-        # TODO: Replace this placeholder with your DP controller.
-        # Return the (6,) desired BODY wrench — fill in tau_d[0] = Fx,
-        # tau_d[1] = Fy, tau_d[5] = Mz and leave the rest zero.
-        return np.zeros(6)
+        # NOTE: reference parameters comes in NED frame, eta and nu comes in BODY frame. Return tau_desired in BODY frame
+
+        # ---------- PID-REGULATOR ------------
+            # The PID-controller is a SISO for each state, meaning we have three PIDs, one for each state (N, E, psi).
+            # The controller calculates a desired wrench (force and torques) in the NED frame.
+            # The wrench is then transformed to BODY fram and sent to the thruster allocater
+
+        # Extracting states:
+        N     = eta[0]
+        E     = eta[1]
+        psi   = eta[5]
+        N_d   = eta_ref[0]
+        E_d   = eta_ref[1]
+        psi_d = eta_ref[5]
+
+        # Position errors in NED frame:
+        e_ned = np.array([
+            N_d - N,
+            E_d - E
+        ])
+
+        # Heading error wrapped to (-pi, pi]
+        e_psi = wrap_angle_pi(psi_d - psi)
+
+        # REGULATOR - integral effect
+        self.integral_ned += e_ned * dt
+        self.integral_psi += e_psi * dt
+
+        # REGULATOR - derivative effect
+        u = nu[0]
+        v = nu[1]
+        r = nu[5]
+
+        J = Rz(psi) 
+        nu_ned = J @ np.array([u, v, r]) # nu comes in BODY frame so must be transformed to NED
+        nu_ref_ned = np.array([
+            nu_ref[0],
+            nu_ref[1],
+            nu_ref[5]
+        ])
+        e_dot_ned = nu_ref_ned[:2] - nu_ned[:2]
+        e_dot_psi = nu_ref_ned[2] - nu_ned[2]
+
+        # PID regulator for NED
+        # north and east
+        F_ned_P = self.tuningParameters.Kp @ e_ned
+        F_ned_I = self.tuningParameters.Ki @ self.integral_ned
+        F_ned_D = self.tuningParameters.Kd @ e_dot_ned
+        F_ned = F_ned_P + F_ned_I + F_ned_D
+
+        # yaw part:
+        Mz_P = self.tuningParameters.Kp_psi * e_psi
+        Mz_I = self.tuningParameters.Ki_psi * self.integral_psi
+        Mz_D = self.tuningParameters.Kd_psi * e_dot_psi
+        Mz = Mz_P + Mz_I + Mz_D
+
+
+        # Transform the control input from NED -> BODY
+        F_body = ned_to_body_xy(F_ned[:2], psi)
+        Fx = F_body[0]
+        Fy = F_body[1]
+
+        # create return variable tau_desired
+        tau_d = np.zeros(6)     # desired/unsaturated wrench in BODY
+        tau_d[0] = Fx
+        tau_d[1] = Fy
+        tau_d[5] = Mz
+
+        # TODO: anti-integrator-windup
+        self.last_tau_unsat = tau_d.copy()      # desired tau in BODY
+
+        return tau_d
