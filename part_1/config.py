@@ -41,7 +41,7 @@ class SimConfig:
     method: str = "Euler"
     use_reference: bool = True
     thruster_dynamics: bool = False  # Part 1: ideal actuators (no rate limits, no saturation)
-    bypass_actuators: bool = True   # apply tau_d directly (debug)
+    bypass_actuators: bool = False   # False = thrust allocation is active, True = Thrust allocation is bypassed, apply tau_d directly (debug)
 
 
 @dataclass
