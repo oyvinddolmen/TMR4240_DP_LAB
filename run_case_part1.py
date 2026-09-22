@@ -54,7 +54,7 @@ def main():
 
     # 5) Define environment models (default: calm water)
     current = Current()
-    wind = Wind()
+    wind = Wind(mean_speed=10.0, beta=np.pi, semantics="towards", sigma_slow=1.5, tau_slow=120.0, seed=42)
 
     # Simulation 1a from the project description — station keeping at the
     # origin in a 0.5 m/s current from east, no wind. Once your subsystems
