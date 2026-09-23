@@ -15,7 +15,7 @@ import numpy as np
 
 from part_1.config import SimConfig, default_thrusters_gunnerus3
 from simulation.simulation_part_1 import DPSimulator3DOF
-from simulation.plotter import plot_dashboard, plot_time_histories
+from simulation.plotter import plot_dashboard, plot_time_histories, plot_wind, plot_thrusters
 from part_1.controller import DPController
 from part_1.reference import ReferenceModel
 from part_1.current import Current
@@ -26,7 +26,7 @@ from part_1.wind import Wind
 
 def main():
     # 1) Simulation clock and options
-    cfg = SimConfig(dt=0.05, T=300.0, method="Euler", use_reference=True)
+    cfg = SimConfig(dt=0.05, T=1500.0, method="Euler", use_reference=True)
 
     # 2) Controller, reference model, and thruster layout
     # Pass your own design parameters (gains, limits, ...) to your controller.
@@ -48,13 +48,33 @@ def main():
     # The 3-DOF model uses N = eta_cmd[0], E = eta_cmd[1], psi = eta_cmd[5];
     # leave the other components zero.
     # Constant setpoint example:
-    eta_cmd = np.array([10.0, 30.0, 0.0, 0.0, 0.0, np.pi/3])
+    #eta_cmd = np.array([10.0, 30.0, 0.0, 0.0, 0.0, 3 * np.pi/2])
 
+    # --- Simulation 4: four-corner test, 300 s per corner ---
+    corners = [
+        (50.0,   0.0,  0.0),
+        (50.0, -50.0,  0.0),
+        (50.0, -50.0, -np.pi / 4),
+        ( 0.0, -50.0, -np.pi / 4),
+        ( 0.0,   0.0,  0.0),
+    ]
+    hold = 300.0                                   # [s] per corner — increase if not settled
+    dt = SimConfig().dt
+    T4 = hold * len(corners)
+
+    N = int(round(T4 / dt)) + 1                    # same step count as the engine
+    t4 = np.arange(N) * dt
+    eta_cmd4 = np.zeros((N, 6))
+    for i, (n_c, e_c, psi_c) in enumerate(corners):
+        rows = t4 >= i * hold
+        eta_cmd4[rows, 0], eta_cmd4[rows, 1], eta_cmd4[rows, 5] = n_c, e_c, psi_c
+
+    eta_cmd = eta_cmd4
     # Students may replace eta_cmd with a time series of shape (N_steps, 6).
 
     # 5) Define environment models (default: calm water)
     current = Current()
-    wind = Wind(mean_speed=10.0, beta=np.pi, semantics="towards", sigma_slow=1.5, tau_slow=120.0, seed=42)
+    wind = Wind()
 
     # Simulation 1a from the project description — station keeping at the
     # origin in a 0.5 m/s current from east, no wind. Once your subsystems
@@ -71,6 +91,8 @@ def main():
     # plot_wrench, plot_current, plot_wind.
     plot_dashboard(logs)
     plot_time_histories(logs)
+    #plot_wind(logs)
+    #plot_thrusters(logs)
     plt.show()
 
     # Confirmation

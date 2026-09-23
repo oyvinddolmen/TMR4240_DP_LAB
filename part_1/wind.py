@@ -90,7 +90,7 @@ class Wind:
         self.mean_speed = float(mean_speed)
         self.beta = float(beta)
         self.semantics = semantics
-        self.sigma_slow = float(sigma_slow)
+        self.sigma_slow = sigma_slow / np.sqrt(120/2)          # TEMPORARY CHANGE FROM ØYVIND
         self.tau_slow = float(tau_slow)
         self.seed = seed
 

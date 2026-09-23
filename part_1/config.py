@@ -58,7 +58,7 @@ class RefAxisConfig:
     # TODO (students): wn below is a placeholder, NOT a tuned value. Choose
     # the natural frequency yourself and justify it in the report (see the
     # project text, Reference Model section).
-    wn: float = 0.2                     # natural frequency [rad/s] (placeholder)
+    wn: float = 0.1                     # natural frequency [rad/s] (placeholder)
     zeta: float = 1.0                   # damping ratio [-]
     rate_limit: Optional[float] = None  # max |x_dot| (m/s or rad/s); None = off
 
@@ -66,14 +66,16 @@ class RefAxisConfig:
 @dataclass
 class TuningParameters:
     # w_c = 0.12, zeta = 1
-    Kp: np.ndarray = field(default_factory=lambda: np.diag([8650, 10176]))
-    Ki: np.ndarray = field(default_factory=lambda: np.diag([100, 100]))
-    Kd: np.ndarray = field(default_factory=lambda: np.diag([144168, 169608]))
-    Kp_psi:  float = 7.8E5
-    Ki_psi:  float = 1.88E3
-    Kd_psi:  float = 1.3E7
-    Kaw:     float = field(default_factory=lambda: np.diag([1.0, 1.0]))        # K_anti_windup for integrator
-    Kaw_psi: float = 0
+    Kp:  np.ndarray = field(default_factory=lambda: np.diag([8650, 10176]))
+    Ki:  np.ndarray = field(default_factory=lambda: np.diag([200, 400]))
+    Kd:  np.ndarray = field(default_factory=lambda: np.diag([144168, 169608]))
+
+    Kp_psi:   float = 7.8E5
+    Ki_psi:   float = 1.8E4
+    Kd_psi:   float = 1.3E7
+
+    Kaw: np.ndarray = field(default_factory=lambda: np.diag([0.1, 0.1]))        # K_anti_windup for integrator
+    Kaw_psi:  float = 0.01
 
     """
     # w_c = 0.2, zeta = 1

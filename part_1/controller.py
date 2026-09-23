@@ -51,14 +51,6 @@ from scipy.linalg import solve_continuous_are
 
 
 class DPController:
-    """
-    Template for student DP controller.
-
-    Students may implement any type of controller (PID, LQR, backstepping,
-    ...). Only compute() is required; everything else is optional.
-    """
-    
-
     def __init__(self, *args, **kwargs):
         # Tuning parameters
         self.tuningParameters = TuningParameters()
@@ -68,7 +60,7 @@ class DPController:
         self.integral_psi = 0.0
 
         # for anti integrator windup
-        self.last_tau_unsat = np.zeros(6)         # BODY
+        self.last_tau_unsat = np.zeros(6)         # BODY frame
 
     def reset(self) -> None:
         self.integral_ned[:] = 0.0
@@ -76,7 +68,7 @@ class DPController:
         self.last_tau_unsat[:] = 0.0
 
     def apply_external_aw(self, tau_applied, psi, dt):
-        # retrieve variables
+        # retrieve variables from config.py
         Kaw = self.tuningParameters.Kaw
         Kaw_psi = self.tuningParameters.Kaw_psi
         tau_unsat = self.last_tau_unsat 
@@ -84,6 +76,25 @@ class DPController:
         # difference between achievable and desired wrench
         delta_tau_body = tau_applied - tau_unsat
 
+        '''
+        # Check for saturation
+        if np.any(np.abs(delta_tau_body[[0, 1, 5]]) > 1e-6):
+
+            print("\n--- THRUSTER SATURATION ---")
+
+            labels = ["Fx", "Fy", "Mz"]
+
+            for i, label in zip([0, 1, 5], labels):
+                if abs(delta_tau_body[i]) > 1e-6:
+                    print(
+                        f"{label}: "
+                        f"requested = {tau_unsat[i]:.2f}, "
+                        f"applied = {tau_applied[i]:.2f}, "
+                        f"difference = {delta_tau_body[i]:.2f}"
+                    )
+
+            print("----------------------------")
+        '''
         # transform power and torque difference to NED since integrator part is in NED
         delta_tau_3dof_ned = Rz(psi) @ delta_tau_body[[0, 1, 5]]
         delta_F_NE = delta_tau_3dof_ned[:2]
@@ -103,7 +114,7 @@ class DPController:
         nu_ref: np.ndarray | None = None,   
         acc_ref: np.ndarray | None = None,
     ) -> np.ndarray:
-        # NOTE: reference parameters comes in NED frame, eta and nu comes in BODY frame. Return tau_desired in BODY frame
+        # NOTE: eta_ref and eta is NED-frame. nu is BODY. Return tau_desired in BODY frame
 
         # ---------- PID-REGULATOR ------------
             # The PID-controller is a SISO for each state, meaning we have three PIDs, one for each state (N, E, psi).
