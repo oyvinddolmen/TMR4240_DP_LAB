@@ -65,10 +65,24 @@ class RefAxisConfig:
 
 @dataclass
 class TuningParameters:
+    # w_c = 0.12, zeta = 1. not tuned
+    Kp:  np.ndarray = field(default_factory=lambda: np.diag([8650, 10176]))
+    Ki:  np.ndarray = field(default_factory=lambda: np.diag([130, 153]))
+    Kd:  np.ndarray = field(default_factory=lambda: np.diag([143050, 147318]))
+
+    Kp_psi:   float = 7.8E5
+    Ki_psi:   float = 11785
+    Kd_psi:   float = 1.1E7
+
+    Kaw: np.ndarray = field(default_factory=lambda: np.diag([1/(130*10), 1/(153*10)]))        # K_anti_windup for integrator. 1/(Ki*T)
+    Kaw_psi:  float = 1/(11800*10)
+
+    """
+    Better at wind and current, but more overshoot
     # w_c = 0.12, zeta = 1
     Kp:  np.ndarray = field(default_factory=lambda: np.diag([8650, 10176]))
     Ki:  np.ndarray = field(default_factory=lambda: np.diag([200, 400]))
-    Kd:  np.ndarray = field(default_factory=lambda: np.diag([144168, 169608]))
+    Kd:  np.ndarray = field(default_factory=lambda: np.diag([184168, 209608]))
 
     Kp_psi:   float = 7.8E5
     Ki_psi:   float = 1.8E4
@@ -76,17 +90,6 @@ class TuningParameters:
 
     Kaw: np.ndarray = field(default_factory=lambda: np.diag([0.1, 0.1]))        # K_anti_windup for integrator
     Kaw_psi:  float = 0.01
-
-    """
-    # w_c = 0.2, zeta = 1
-    Kp: np.ndarray = field(default_factory=lambda: np.diag([24028, 28268]))
-    Ki: np.ndarray = field(default_factory=lambda: np.diag([0, 0]))
-    Kd: np.ndarray = field(default_factory=lambda: np.diag([240280, 282680]))
-    Kp_psi:  float = 2.17E6
-    Ki_psi:  float = 0
-    Kd_psi:  float = 2.17E7
-    Kaw:     float = field(default_factory=lambda: np.diag([1.0, 1.0]))        # K_anti_windup for integrator
-    Kaw_psi: float = 0
     """
 
 def default_thrusters_gunnerus3() -> list[ThrusterConfig]:
