@@ -129,6 +129,13 @@ class DPController:
         E_d   = eta_ref[1]
         psi_d = eta_ref[5]
 
+        # Heading dependent gains
+        J = Rz(psi)
+        J_2x2 = J[:2, :2]
+        Kp_ned = J_2x2 @ self.tuningParameters.Kp @ J_2x2.T
+        Ki_ned = J_2x2 @ self.tuningParameters.Ki @ J_2x2.T
+        Kd_ned = J_2x2 @ self.tuningParameters.Kd @ J_2x2.T
+
         # Position errors in NED frame:
         e_ned = np.array([
             N_d - N,
@@ -147,7 +154,6 @@ class DPController:
         v = nu[1]
         r = nu[5]
 
-        J = Rz(psi) 
         nu_ned = J @ np.array([u, v, r]) # nu comes in BODY frame so must be transformed to NED
         nu_ref_ned = np.array([
             nu_ref[0],
@@ -157,11 +163,11 @@ class DPController:
         e_dot_ned = nu_ref_ned[:2] - nu_ned[:2]
         e_dot_psi = nu_ref_ned[2] - nu_ned[2]
 
-        # PID regulator for NED
+        # PID regulator for NED rame
         # north and east
-        F_ned_P = self.tuningParameters.Kp @ e_ned
-        F_ned_I = self.tuningParameters.Ki @ self.integral_ned
-        F_ned_D = self.tuningParameters.Kd @ e_dot_ned
+        F_ned_P = Kp_ned @ e_ned
+        F_ned_I = Ki_ned @ self.integral_ned
+        F_ned_D = Kd_ned @ e_dot_ned
         F_ned = F_ned_P + F_ned_I + F_ned_D
 
         # yaw part:
@@ -169,7 +175,6 @@ class DPController:
         Mz_I = self.tuningParameters.Ki_psi * self.integral_psi
         Mz_D = self.tuningParameters.Kd_psi * e_dot_psi
         Mz = Mz_P + Mz_I + Mz_D
-
 
         # Transform the control input from NED -> BODY
         F_body = ned_to_body_xy(F_ned[:2], psi)
