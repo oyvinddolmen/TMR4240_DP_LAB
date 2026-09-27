@@ -76,32 +76,17 @@ class DPController:
         # difference between achievable and desired wrench
         delta_tau_body = tau_applied - tau_unsat
 
-        '''
-        # Check for saturation
-        if np.any(np.abs(delta_tau_body[[0, 1, 5]]) > 1e-6):
-
-            print("\n--- THRUSTER SATURATION ---")
-
-            labels = ["Fx", "Fy", "Mz"]
-
-            for i, label in zip([0, 1, 5], labels):
-                if abs(delta_tau_body[i]) > 1e-6:
-                    print(
-                        f"{label}: "
-                        f"requested = {tau_unsat[i]:.2f}, "
-                        f"applied = {tau_applied[i]:.2f}, "
-                        f"difference = {delta_tau_body[i]:.2f}"
-                    )
-
-            print("----------------------------")
-        '''
         # transform power and torque difference to NED since integrator part is in NED
         delta_tau_3dof_ned = Rz(psi) @ delta_tau_body[[0, 1, 5]]
         delta_F_NE = delta_tau_3dof_ned[:2]
         delta_M_psi = delta_tau_3dof_ned[-1]
 
+        # Heading-dependent anti-windup gain
+        J_2x2 = Rz(psi)[:2, :2]
+        Kaw_ned = J_2x2 @ Kaw @ J_2x2.T
+
         # add anti-windup part of the integrator equation
-        self.integral_ned += Kaw @ delta_F_NE * dt        # NORTH, EAST
+        self.integral_ned += Kaw_ned @ delta_F_NE * dt        # NORTH, EAST
         self.integral_psi += Kaw_psi * delta_M_psi * dt   # psi
 
     def compute(

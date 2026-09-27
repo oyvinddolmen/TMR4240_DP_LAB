@@ -68,11 +68,11 @@ class TuningParameters:
     # w_c = 0.12, zeta = 1. not tuned
     Kp:  np.ndarray = field(default_factory=lambda: np.diag([8650, 10176]))
     Ki:  np.ndarray = field(default_factory=lambda: np.diag([130, 153]))
-    Kd:  np.ndarray = field(default_factory=lambda: np.diag([143050, 147318]))
+    Kd:  np.ndarray = field(default_factory=lambda: np.diag([163050, 157318]))
 
     Kp_psi:   float = 7.8E5
     Ki_psi:   float = 11785
-    Kd_psi:   float = 1.1E7
+    Kd_psi:   float = 1.4E7
 
     Kaw: np.ndarray = field(default_factory=lambda: np.diag([1/(130*10), 1/(153*10)]))        # K_anti_windup for integrator. 1/(Ki*T)
     Kaw_psi:  float = 1/(11800*10)
