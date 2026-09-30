@@ -1,6 +1,4 @@
 """
-Thrust allocation for TMR4240 Project Part 1.
-
 The DP controller requests a BODY-frame wrench tau = [Fx, Fy, Mz]. Directly
 using azimuth thrust magnitude u and angle alpha as decision variables makes
 the wrench equality nonlinear. Instead, the azimuth thrusters are represented
@@ -12,13 +10,17 @@ which gives the linear relation
 
     Be @ z = tau.
 
-Normal operation uses the minimum-norm solution. If that solution violates a
-static thrust limit, a constrained optimisation redistributes the available
+The azimuth magnitude limit then becomes a circular constraint in the
+(Fx, Fy) plane. This constraint is nonlinear but convex, which keeps the
+saturation problem much easier to solve than the direct (u, alpha) form.
+
+Normal operation uses the minimum-norm solution. If that solution violates
+static thrust limits, a constrained optimisation redistributes the available
 thrust. Uniform de-rating is kept as a robust fallback if the optimiser does
 not return a valid solution.
 
-Part 1 uses ideal actuator dynamics, so thrust-rate and azimuth-rate limits are
-not handled by this allocator.
+Part 1 uses ideal actuator dynamics, so thrust-rate and azimuth turn-rate limits
+are not included
 """
 
 from typing import List, Optional, Tuple
@@ -31,13 +33,16 @@ from simulation.utils import wrap_angle_pi
 
 
 class ThrustAllocator:
-    """Allocate the requested 3-DOF BODY wrench to the Gunnerus thrusters."""
+    """Allocates the requested 3-DOF BODY wrench to the thrusters"""
+
+    # ------------------------------------------------------------------
+    # Initialization of thruster configuration
+    # ------------------------------------------------------------------
 
     def __init__(self, thrusters: List[ThrusterConfig]):
         self.thrusters = thrusters
 
-        # Part 1 uses one fixed tunnel thruster followed by two azimuths.
-        # Keeping this assumption explicit makes the indexing easy to verify.
+        # One fixed tunnel thruster and two azimuths
         if (
             len(thrusters) != 3
             or thrusters[0].kind != "tunnel"
@@ -45,7 +50,7 @@ class ThrustAllocator:
             or thrusters[2].kind != "azimuth"
         ):
             raise ValueError(
-                "Expected the Part 1 Gunnerus layout: one tunnel and two azimuth thrusters."
+                "Inputed thruster config does not match what is expected"
             )
 
         self.tunnel = thrusters[0]
@@ -53,18 +58,19 @@ class ThrustAllocator:
         self.az2 = thrusters[2]
 
         # Constant extended configuration matrix for
-        # z = [u_T, Fx1, Fy1, Fx2, Fy2].
+        # z = [u_T, Fx1, Fy1, Fx2, Fy2]
         self.Be = self._build_configuration_matrix()
 
-        # Rank 3 is required to independently produce surge, sway and yaw.
+        # Rank(Be)=3 is required to independently produce surge, sway and yaw
         if np.linalg.matrix_rank(self.Be) != 3:
-            raise ValueError("Extended thrust configuration matrix Be must have rank 3.")
+            raise ValueError("Extended thrust configuration matrix Be must have rank 3, but currently does not")
 
-        # The simulator uses N, but kN/kNm give better numerical scaling in SLSQP.
-        self.u_max = np.array([th.u_max for th in thrusters], dtype=float) / 1000.0
+        # The simulator stores thrust limits in N, while this allocator works in
+        # kN/kNm internally to give SLSQP better numerical scaling
+        self.u_max_kn = np.array([th.u_max for th in thrusters], dtype=float) / 1000.0
 
     # ------------------------------------------------------------------
-    # Extended configuration matrix and normal allocation
+    # Extended configuration matrix
     # ------------------------------------------------------------------
 
     def _build_configuration_matrix(self) -> np.ndarray:
@@ -84,7 +90,7 @@ class ThrustAllocator:
         ])
 
         # Splitting each azimuth force into Cartesian components gives
-        # constant columns Fx -> [1, 0, -y] and Fy -> [0, 1, x].
+        # constant columns Fx -> [1, 0, -y] and Fy -> [0, 1, x]
         B_fx1 = np.array([1.0, 0.0, -self.az1.y])
         B_fy1 = np.array([0.0, 1.0, self.az1.x])
         B_fx2 = np.array([1.0, 0.0, -self.az2.y])
@@ -92,12 +98,17 @@ class ThrustAllocator:
 
         return np.column_stack([B_tunnel, B_fx1, B_fy1, B_fx2, B_fy2])
 
+    # ------------------------------------------------------------------
+    # Normal allocation
+    # ------------------------------------------------------------------
+
     def _minimum_norm_allocation(self, tau: np.ndarray) -> np.ndarray:
         """
         Return the minimum-norm solution of Be @ z = tau.
 
         Since Be is 3x5, several allocations can produce the same wrench. The
-        pseudo-inverse solution chooses the z with minimum Euclidean norm.
+        pseudo-inverse solution chooses the z with minimum Euclidean norm. This
+        minimises squared thrust magnitude
         """
 
         # z = Be.T @ (Be @ Be.T)^(-1) @ tau.
@@ -111,14 +122,16 @@ class ThrustAllocator:
     def _is_feasible(self, z: np.ndarray, tol: float = 1e-6) -> bool:
         """Check the tunnel limit and the circular azimuth thrust limits."""
 
+        # The tunnel limit is scalar. For each azimuth, the physical thrust
+        # magnitude is the Euclidean norm of its Cartesian force components
         u_tunnel = abs(z[0])
         u_az1 = np.hypot(z[1], z[2])
         u_az2 = np.hypot(z[3], z[4])
 
         return (
-            u_tunnel <= self.u_max[0] + tol
-            and u_az1 <= self.u_max[1] + tol
-            and u_az2 <= self.u_max[2] + tol
+            u_tunnel <= self.u_max_kn[0] + tol
+            and u_az1 <= self.u_max_kn[1] + tol
+            and u_az2 <= self.u_max_kn[2] + tol
         )
 
     def _uniform_derating(self, z: np.ndarray) -> Tuple[np.ndarray, float]:
@@ -129,14 +142,14 @@ class ThrustAllocator:
         The returned lambda is the achievable fraction of the original wrench.
         """
 
-        # Relative utilisation of tunnel, azimuth 1 and azimuth 2.
+        # Relative utilisation of tunnel, azimuth 1 and azimuth 2
         utilisation = np.array([
-            abs(z[0]) / self.u_max[0],
-            np.hypot(z[1], z[2]) / self.u_max[1],
-            np.hypot(z[3], z[4]) / self.u_max[2],
+            abs(z[0]) / self.u_max_kn[0],
+            np.hypot(z[1], z[2]) / self.u_max_kn[1],
+            np.hypot(z[3], z[4]) / self.u_max_kn[2],
         ])
 
-        # If the largest utilisation is r > 1, z/r satisfies all limits.
+        # If the largest utilisation is r > 1, z/r satisfies all limits
         scale = max(1.0, float(np.max(utilisation)))
         return z / scale, 1.0 / scale
 
@@ -160,42 +173,44 @@ class ThrustAllocator:
 
             Fx_j^2 + Fy_j^2 <= u_max_j^2
 
-        for both azimuth thrusters. lambda = 1 means that the complete
-        requested wrench is achievable; lambda < 1 means the request exceeds
-        the available actuator capacity.
+        for both azimuth thrusters. The equality is linear and each azimuth limit
+        is a convex disc in force space, so the saturation problem remains
+        convex even though the disc constraints are nonlinear.
+
+        lambda = 1 means that the complete requested wrench is achievable;
+        lambda < 1 means the request exceeds the available actuator capacity.
         """
 
         # Start from the uniformly de-rated solution. It is already feasible
-        # and satisfies the scaled wrench equality.
+        # and satisfies the scaled wrench equality
         z0, lambda0 = self._uniform_derating(z_unconstrained)
         x0 = np.append(z0, lambda0)  # x = [z, lambda]
 
-        # SLSQP minimises, hence -lambda corresponds to maximising lambda.
+        # SLSQP minimises, hence -lambda corresponds to maximising lambda
         def objective(x: np.ndarray) -> float:
             return -float(x[5])
 
-        # Keep the achieved wrench in the same direction as the requested one.
+        # Keep the achieved wrench in the same direction as the requested one
         def wrench_constraint(x: np.ndarray) -> np.ndarray:
             return self.Be @ x[:5] - x[5] * tau
 
         # The azimuth limits are discs in the (Fx, Fy) plane. Writing them in
-        # squared form avoids the square root in u = sqrt(Fx^2 + Fy^2).
+        # squared form avoids the square root in u = sqrt(Fx^2 + Fy^2)
         constraints = [
             {"type": "eq", "fun": wrench_constraint},
             {
                 "type": "ineq",
-                "fun": lambda x: self.u_max[1] ** 2 - x[1] ** 2 - x[2] ** 2,
+                "fun": lambda x: self.u_max_kn[1] ** 2 - x[1] ** 2 - x[2] ** 2,
             },
             {
                 "type": "ineq",
-                "fun": lambda x: self.u_max[2] ** 2 - x[3] ** 2 - x[4] ** 2,
+                "fun": lambda x: self.u_max_kn[2] ** 2 - x[3] ** 2 - x[4] ** 2,
             },
         ]
 
-        # Tunnel thrust and lambda have simple box constraints; the azimuth
-        # magnitudes are limited by the circular constraints above.
+        # Tunnel thrust and lambda have simple box constraints
         bounds = [
-            (-self.u_max[0], self.u_max[0]),  # u_T
+            (-self.u_max_kn[0], self.u_max_kn[0]),  # u_T
             (None, None),                     # Fx1
             (None, None),                     # Fy1
             (None, None),                     # Fx2
@@ -215,8 +230,8 @@ class ThrustAllocator:
         z = np.asarray(result.x[:5], dtype=float)
         lam = float(result.x[5])
 
-        # Do not rely on result.success alone. Verify that the returned point
-        # is finite, respects the thrust limits and satisfies the equality.
+        # Verify that the returned point
+        # is finite, respects the thrust limits and satisfies the equality
         residual = np.linalg.norm(self.Be @ z - lam * tau)
         valid = (
             np.all(np.isfinite(z))
@@ -229,7 +244,7 @@ class ThrustAllocator:
         return z if valid else None
 
     # ------------------------------------------------------------------
-    # Convert Cartesian azimuth forces back to physical commands
+    # Converts Cartesian azimuth forces back to force magnitude and angle
     # ------------------------------------------------------------------
 
     def _to_thruster_commands(
@@ -248,20 +263,23 @@ class ThrustAllocator:
         u_cmd = np.zeros(3)
         alpha_cmd = np.zeros(3)
 
-        # Tunnel direction is fixed; only its signed thrust changes.
-        u_cmd[0] = z[0] * 1000.0
+        # Unpack z explicitly so the code mirrors the allocation-vector
+        # definition used in the report
+        u_tunnel, Fx1, Fy1, Fx2, Fy2 = z
+
+        # Tunnel direction is fixed; only its signed thrust changes
+        u_cmd[0] = u_tunnel * 1000.0
         alpha_cmd[0] = self.tunnel.alpha0
 
         # Convert each azimuth from Cartesian force components to (u, alpha).
-        for j, idx in enumerate((1, 2)):
-            Fx = z[1 + 2 * j]
-            Fy = z[2 + 2 * j]
+        azimuth_forces = ((1, Fx1, Fy1), (2, Fx2, Fy2))
+        for idx, Fx, Fy in azimuth_forces:
             u = float(np.hypot(Fx, Fy))
 
             current_angle = None if alpha_now is None else float(alpha_now[idx])
 
             # At zero thrust the angle has no force effect. Keep the current
-            # angle, if known, to avoid an unnecessary azimuth command.
+            # angle, if known, to avoid an unnecessary azimuth command, and power usage
             if u < 1e-10:
                 alpha = 0.0 if current_angle is None else current_angle
             else:
@@ -286,38 +304,37 @@ class ThrustAllocator:
         return u_cmd, alpha_cmd
 
     # ------------------------------------------------------------------
-    # Public interface called by the simulator once per time step
+    # "Main" function that runs per time-step
     # ------------------------------------------------------------------
 
     def allocate(
         self,
-        t: float,
-        dt: float,
-        tau_d: np.ndarray,
-        u_now: Optional[np.ndarray] = None,
-        alpha_now: Optional[np.ndarray] = None,
+        t: float,                                           # Not used
+        dt: float,                                          # Not used
+        tau_d: np.ndarray,                                  # Desired thrust wrench
+        u_now: Optional[np.ndarray] = None,                 # Not used
+        alpha_now: Optional[np.ndarray] = None,             # Current angle on a thruster
     ) -> Tuple[np.ndarray, np.ndarray]:
-        """Allocate the desired 6-DOF controller wrench to the Part 1 thrusters."""
+        """Calculates thruster force-magnitude and direction based on the desired 3-DOF controller wrench"""
 
         # Part 1 allocates surge, sway and yaw only. Use kN/kNm internally so
         # the constrained optimisation is numerically well scaled.
         tau = np.asarray(tau_d[[0, 1, 5]], dtype=float) / 1000.0
 
-        # Use the simple minimum-norm solution during normal operation.
+        # Use the minimum-norm solution during normal operation.
         z = self._minimum_norm_allocation(tau)
 
-        # If a static thrust limit is exceeded, try to redistribute the thrust
-        # before reducing the requested wrench magnitude.
+        # Checks if requested thrust wrench is feasable
+        # If static limits are exceeded, the algorithms tries to redistribute the forces
+        # If the desired wrench cannot be obtained, the magnutude gets reduced before the command is passed forwards
         if not self._is_feasible(z):
             z_constrained = self._constrained_allocation(tau, z)
 
             if z_constrained is not None:
                 z = z_constrained
             else:
-                # Robust fallback if SLSQP does not return a valid solution.
+                # Fallback if SLSQP does not return a valid solution
                 z, _ = self._uniform_derating(z)
 
-        # t, dt and u_now belong to the common allocator interface but are not
-        # required by this static Part 1 method. alpha_now is used only to
-        # choose the equivalent azimuth command with the smallest rotation.
+        
         return self._to_thruster_commands(z, alpha_now)
