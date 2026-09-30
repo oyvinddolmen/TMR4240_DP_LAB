@@ -99,7 +99,6 @@ class DPController:
         nu_ref: np.ndarray | None = None,   
         acc_ref: np.ndarray | None = None,
     ) -> np.ndarray:
-        # NOTE: eta_ref and eta is NED-frame. nu is BODY. Return tau_desired in BODY frame
 
         # ---------- PID-REGULATOR ------------
             # The PID-controller is a SISO for each state, meaning we have three PIDs, one for each state (N, E, psi).
@@ -172,7 +171,6 @@ class DPController:
         tau_d[1] = Fy
         tau_d[5] = Mz
 
-        # TODO: anti-integrator-windup
         self.last_tau_unsat = tau_d.copy()      # desired tau in BODY
 
         return tau_d
