@@ -49,7 +49,7 @@ class Current:
     def __init__(self, speed: float = 0.0, beta: float = 0.0, *,
                  semantics: str = "towards",
                  beta_end: float | None = None, duration: float = 0.0):
-        # TODO: Store and use the parameters above in step().
+        
         self.speed = float(speed)
         self.beta = float(beta)
         self.semantics = semantics
