@@ -55,10 +55,10 @@ class RefAxisConfig:
     defaults here (overriding them only in ``run_case_part1.py`` will not
     reach the checks).
     """
-    # TODO (students): wn below is a placeholder, NOT a tuned value. Choose
+    # (students): wn below is a placeholder, NOT a tuned value. Choose
     # the natural frequency yourself and justify it in the report (see the
     # project text, Reference Model section).
-    wn: float = 0.1                     # natural frequency [rad/s] (placeholder)
+    wn: float = 0.1                     # natural frequency [rad/s]
     zeta: float = 1.0                   # damping ratio [-]
     rate_limit: Optional[float] = None  # max |x_dot| (m/s or rad/s); None = off
 

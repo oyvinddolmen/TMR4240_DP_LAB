@@ -49,9 +49,8 @@ class Current:
     """
 
     def __init__(self, speed: float = 0.0, beta: float = 0.0, *,
-                 semantics: str = "towards",
-                 beta_end: float | None = None, duration: float = 0.0):
-        # TODO: Store and use the parameters above in step().
+        semantics: str = "towards", beta_end: float | None = None, duration: float = 0.0):
+            
         self.speed = float(speed)
         self.beta = float(beta)
         self.semantics = semantics
@@ -65,6 +64,28 @@ class Current:
         eta: np.ndarray,
         nu: np.ndarray,
     ) -> np.ndarray:
-        # TODO: Replace this placeholder with your current model.
-        # Default: no current.
-        return np.zeros(6)
+        
+        # Start with the initial current direction
+        beta_t = self.beta
+
+        # If beta_end is specified, vary the direction linearly
+        # from beta to beta_end during the specified duration.
+        if self.beta_end is not None and self.duration > 0.0:
+            alpha = np.clip(t / self.duration, 0.0, 1.0)
+            beta_t = self.beta + alpha * (self.beta_end - self.beta)
+
+        # If beta describes where the current comes FROM,
+        # reverse the direction by 180 degrees.
+        if self.semantics == "from":
+            beta_t += np.pi
+
+        # Convert current speed and direction to NED components.
+        V_N = self.speed * np.cos(beta_t)
+        V_E = self.speed * np.sin(beta_t)
+
+        # Generalized current velocity in NED coordinates.
+        nu_c_ned = np.zeros(6)
+        nu_c_ned[0] = V_N
+        nu_c_ned[1] = V_E
+
+        return nu_c_ned
