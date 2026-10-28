@@ -33,7 +33,8 @@ from part_2.config import Part2SimConfig, default_thrusters_part_2
 from part_2.controller import DPController
 from part_2.current import Current
 from part_2.observer import select_observer
-from simulation.plotter_part_2 import (plot_observer, plot_observer_error,
+from simulation.plotter_part_2 import (plot_heading_decomposition,
+                                       plot_observer, plot_observer_error,
                                        plot_thruster_setpoints, plot_waves,
                                        plot_wind_field, plot_wrench_residual)
 from part_2.reference import ReferenceModel
@@ -245,6 +246,9 @@ def sim4():
             logs = run(cfg, np.zeros(6), environment(**env_kw), controller=fixed)
             plot_observer(logs).suptitle(f"Observer {kind}, {label}")
             plot_observer_error(logs).suptitle(f"Observer {kind}, {label} — estimation errors")
+            if kind == "kalman":
+                plot_heading_decomposition(logs).suptitle(
+                    f"Observer {kind}, {label} — heading decomposition")
             out[(kind, label)] = logs
     # Convergence: start the estimate away from the truth (the engine resets it
     # ON the truth), then watch the error decay.  Quote the convergence time.

@@ -33,6 +33,7 @@ class Part2Logs:
     eta_est: np.ndarray
     nu_est: np.ndarray
     bias_est: np.ndarray
+    wave_pose_est: np.ndarray
     sp: np.ndarray
     cmd: np.ndarray
     tau_d: np.ndarray
@@ -140,7 +141,7 @@ class DPSimulatorPart2:
         t = np.arange(n) * cfg.dt
         six = lambda: np.zeros((n, 6))
         eta_h, nu_h, eta_mh, nu_mh = six(), six(), six(), six()
-        eta_eh, nu_eh, bias_h = six(), six(), six()
+        eta_eh, nu_eh, bias_h, wave_pose_h = six(), six(), six(), six()
         sp_h, cmd_h, tau_dh, tau_th, tau_total = six(), six(), six(), six(), six()
         tau_wh, tau_waveh = six(), six()
         tau_P, tau_I, tau_D = six(), six(), six()
@@ -172,6 +173,8 @@ class DPSimulatorPart2:
                     estimate = ObserverEstimate(*estimate)
                 eta_ctrl, nu_ctrl = estimate.eta, estimate.nu
                 bias_h[k] = estimate.bias
+                if estimate.wave_pose is not None:
+                    wave_pose_h[k] = estimate.wave_pose
             else:
                 eta_ctrl, nu_ctrl = eta_m, nu_m
             eta_eh[k], nu_eh[k] = eta_ctrl, nu_ctrl
@@ -240,7 +243,7 @@ class DPSimulatorPart2:
             I_psi[k] = getattr(self.controller, "int_psi", 0.0)
 
         return Part2Logs(
-            t, eta_h, nu_h, eta_mh, nu_mh, eta_eh, nu_eh, bias_h,
+            t, eta_h, nu_h, eta_mh, nu_mh, eta_eh, nu_eh, bias_h, wave_pose_h,
             sp_h, cmd_h, tau_dh, tau_th, tau_total, tau_wh, tau_waveh,
             u_cmd_h, a_cmd_h, u_h, a_h, cur_body, Uc, beta_c, Uw, alpha_w,
             beta_w, Uw_mean, Uw_gust, self.thruster_names,

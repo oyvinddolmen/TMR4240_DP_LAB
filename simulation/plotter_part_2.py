@@ -87,6 +87,36 @@ def plot_observer_error(logs, figsize=(11, 7), window=30.0):
     return fig
 
 
+def plot_heading_decomposition(logs, figsize=(11, 4)):
+    """Plot LF heading, estimated wave heading contribution, and measurement.
+
+    For the current observation matrix, ``C_w`` is identity, so the yaw wave
+    contribution is ``wave_pose_est[:, 5]``. The plotted total estimate is
+    ``eta_est[:, 5] + wave_pose_est[:, 5]`` for visual comparison with the
+    measured pose.
+    """
+    if not hasattr(logs, "wave_pose_est"):
+        raise ValueError("This log predates wave-pose logging; rerun the simulation.")
+    to_deg = 180.0 / np.pi
+    psi_lf = np.unwrap(logs.eta_est[:, 5])
+    wave_psi = logs.wave_pose_est[:, 5]
+    psi_measured = np.unwrap(logs.eta_measured[:, 5])
+    psi_total = np.unwrap(psi_lf + wave_psi)
+
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.plot(logs.t, to_deg * psi_lf, label=r"$\hat\psi_{\mathrm{LF}}$")
+    ax.plot(logs.t, to_deg * wave_psi, label=r"$C_{w,\psi}\hat\xi$ (yaw contribution)")
+    ax.plot(logs.t, to_deg * psi_total, "--", label=r"LF + wave estimate")
+    ax.plot(logs.t, to_deg * psi_measured, alpha=0.65, label=r"$\psi_m$")
+    ax.set_xlabel("Time [s]")
+    ax.set_ylabel("Heading [deg]")
+    ax.grid(True, alpha=0.3)
+    ax.legend(loc="best")
+    ax.set_title(f"Heading decomposition: {logs.observer_name}")
+    fig.tight_layout()
+    return fig
+
+
 
 def _wrap_pi(a):
     return (np.asarray(a) + np.pi) % (2.0 * np.pi) - np.pi

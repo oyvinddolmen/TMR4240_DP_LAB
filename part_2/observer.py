@@ -31,6 +31,7 @@ class ObserverEstimate:
     eta: np.ndarray
     nu: np.ndarray
     bias: np.ndarray
+    wave_pose: np.ndarray | None = None
 
 
 class Observer:
@@ -97,24 +98,39 @@ class KalmanFilterObserver(Observer):
 
     def __init__(
         self,
-        omega_w=0.8,
-        zeta_w=0.7,
-        T_bias=(300.0, 300.0, 300.0),
-        q_w_pose=1e-4,
-        q_w_rate=1e-2,
-        q_eta=1e-4,
-        q_nu=1e-3,
+        omega_w=0.8,                    # natural frequency of the modelled waves
+        zeta_w=0.7,                     # dampening ratio of wave model
+        T_bias=(300.0, 300.0, 300.0),   # time constant of enviroment bias, b
+        
+        # Process noise parameters: large value -> trust measurement more
+        q_w_pose=1e-6,                  
+        q_w_rate=1e-4,                      
+        q_eta_N = 1e-6,                        
+        q_eta_E = 1e-6,
+        q_eta_psi = 1e-7,
+        q_nu_u = 1e-4,
+        q_nu_v = 1e-5,
+        q_nu_r = 1e-7,
         q_bias=1e-2,
-        R_diag=(0.05**2, 0.05**2, np.deg2rad(0.1)**2),
+
+        # Measurement noise
+        R_diag=(0.05**2, 0.05**2, np.deg2rad(0.1)**2),  
     ):
         self.omega_w = float(omega_w)   # for second order wave frequency oscillator
         self.zeta_w = float(zeta_w)     # -||-
         self.T_bias = np.asarray(T_bias, dtype=float).reshape(3)
-
         self.q_w_pose = float(q_w_pose)
         self.q_w_rate = float(q_w_rate)
-        self.q_eta = float(q_eta)
-        self.q_nu = float(q_nu)
+        self.q_eta = np.array([
+            q_eta_N,
+            q_eta_E,
+            q_eta_psi
+        ])
+        self.q_nu = np.array([
+            q_nu_u,
+            q_nu_v,
+            q_nu_r
+        ])
         self.q_bias = float(q_bias)
 
         self.R = np.diag(np.asarray(R_diag, dtype=float))
@@ -236,11 +252,11 @@ class KalmanFilterObserver(Observer):
 
     def _process_covariance(self, dt):
         """Discrete process covariance for the Euler model."""
-        q_diag = np.array(          
+        q_diag = np.array(
             [self.q_w_pose] * 3
             + [self.q_w_rate] * 3
-            + [self.q_eta] * 3
-            + [self.q_nu] * 3
+            + self.q_eta.tolist()
+            + self.q_nu.tolist()
             + [self.q_bias] * 3
         )
         return np.diag(q_diag * dt)     # Q_D = Q_c * dt, 15x15 covariance matrix
@@ -300,7 +316,15 @@ class KalmanFilterObserver(Observer):
             eta=eta_out,
             nu=nu_out,
             bias=bias_out,
+            wave_pose=self._expand_reduced(self.x[0:3]),
         )
+
+    @classmethod
+    def _expand_reduced(cls, value):
+        """Expand a reduced [N, E, psi] vector into the 6-DOF interface."""
+        out = np.zeros(6)
+        out[cls.IDX] = value
+        return out
 
 
 def select_observer(kind: str, **kwargs) -> Observer:
