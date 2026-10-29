@@ -103,23 +103,31 @@ class KalmanFilterObserver(Observer):
         T_bias=(300.0, 300.0, 300.0),   # time constant of enviroment bias, b
         
         # Process noise parameters: large value -> trust measurement more
-        q_w_pose=1e-6,                  
-        q_w_rate=1e-4,                      
-        q_eta_N = 1e-6,                        
-        q_eta_E = 1e-6,
-        q_eta_psi = 1e-7,
-        q_nu_u = 1e-4,
-        q_nu_v = 1e-5,
+        q_w_N = 1e-6,
+        q_w_E = 1e-6,
+        q_w_psi = 1e-7,              
+        q_w_rate = 1e-5,   
+
+        q_eta_N = 1e-9,                        
+        q_eta_E = 1e-9,
+        q_eta_psi = 1e-8,
+        q_nu_u = 1e-6,
+        q_nu_v = 1e-7,
         q_nu_r = 1e-7,
+
         q_bias=1e-2,
 
-        # Measurement noise
-        R_diag=(0.05**2, 0.05**2, np.deg2rad(0.1)**2),  
+        # Measurement noise (e.g. waves)
+        R_diag=(0.05**2, 0.05**2, np.deg2rad(0.2)**2),  
     ):
         self.omega_w = float(omega_w)   # for second order wave frequency oscillator
         self.zeta_w = float(zeta_w)     # -||-
         self.T_bias = np.asarray(T_bias, dtype=float).reshape(3)
-        self.q_w_pose = float(q_w_pose)
+        self.q_w_pose = np.array([
+            q_w_N,
+            q_w_E,
+            q_w_psi
+        ])
         self.q_w_rate = float(q_w_rate)
         self.q_eta = np.array([
             q_eta_N,
@@ -253,7 +261,7 @@ class KalmanFilterObserver(Observer):
     def _process_covariance(self, dt):
         """Discrete process covariance for the Euler model."""
         q_diag = np.array(
-            [self.q_w_pose] * 3
+            self.q_w_pose.tolist()
             + [self.q_w_rate] * 3
             + self.q_eta.tolist()
             + self.q_nu.tolist()
