@@ -56,6 +56,7 @@ def plot_time_histories(logs, figsize=(11, 7)):
         ax.set_xlabel("Time [s]")
     fig.suptitle("Position, heading, and velocities")
     fig.tight_layout()
+    #plt.savefig("four courner after tuning.pdf", format="pdf", bbox_inches="tight")
     return fig
 
 
