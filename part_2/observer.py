@@ -57,21 +57,213 @@ class Observer:
 
 
 class NonlinearPassiveObserver(Observer):
-    """Template for a nonlinear passive wave-filtering observer.
-
-    Suggested states are wave-frequency motion, low-frequency pose, BODY
-    velocity, and slowly-varying bias.  Implement the correction and model
-    propagation in :meth:`step`.
-    """
+    """Nonlinear Passive Observer for 3-DOF DP."""
 
     name = "nonlinear_passive"
+    IDX = np.array([0, 1, 5])  # North, East og heading
 
-    def __init__(self, *args, **kwargs):
-        pass
+    def __init__(
+        self,
+        omega_w=2.0 * np.pi / 8.0,
+        zeta_w=0.1,
+        zeta_desired=1.0,
+        notch_factor=2.0,
+        T_bias=(300.0, 300.0, 300.0),
+        k4=(8000.0, 8000.0, 1.5e6),
+        bias_gain_ratio=0.1,
+    ):
+
+        # Parametere for bølgefilteret
+        self.omega_w = float(omega_w)
+        self.zeta_w = float(zeta_w)
+        self.zeta_desired = float(zeta_desired)
+        self.omega_c = notch_factor * self.omega_w
+
+        # Tidskonstanter og gains for bias-estimering
+        self.T_bias = np.asarray(T_bias, dtype=float)
+        self.k4 = np.asarray(k4, dtype=float)
+        self.bias_gain_ratio = float(bias_gain_ratio)
+
+        if not (self.omega_w > 0 and
+                0 < self.zeta_w < self.zeta_desired and
+                notch_factor > 1):
+            raise ValueError("Invalid wave-filter parameters.")
+
+        if np.any(self.T_bias <= 0) or np.any(self.k4 <= 0):
+            raise ValueError("T_bias and k4 must be positive.")
+
+        if not (0 < self.bias_gain_ratio < self.omega_w):
+            raise ValueError("Invalid bias gain ratio.")
+
+        # Massematrise for Gunnerus fra prosjektbeskrivelsen
+        M_data = np.array([
+            [6.007e5, 0.0, 0.0],
+            [0.0, 7.067e5, -4.733e5],
+            [0.0, -5.712e5, 5.456e7]
+        ])
+
+        # Symmetrisering for passivitetsbasert design
+        self.M = 0.5 * (M_data + M_data.T)
+
+        if np.min(np.linalg.eigvalsh(self.M)) <= 0:
+            raise ValueError("Mass matrix must be positive definite.")
+
+        # Lineær dempningsmatrise
+        self.D = np.diag([1.118e3, 2.229e4, 1.950e6])
+
+        I = np.eye(3)
+        Z = np.zeros((3, 3))
+        w = self.omega_w
+
+        # Bølgemodell: ligning (7.3) og (7.4)
+        self.Aw = np.block([
+            [Z, I],
+            [-w**2 * I, -2 * self.zeta_w * w * I]
+        ])
+
+        # Henter bølgebevegelsen fra bølgetilstandene
+        self.Cw = np.hstack((Z, I))
+
+        # Observer gains etter ligning (7.32)-(7.34)
+        dzeta = self.zeta_desired - self.zeta_w
+
+        self.K1 = np.vstack((
+            -2 * dzeta * (self.omega_c / w) * I,
+            2 * w * dzeta * I
+        ))
+
+        self.K2 = self.omega_c * I
+
+        # Gains for bias og hastighetskorreksjon
+        self.K4 = np.diag(self.k4)
+        self.K3 = self.bias_gain_ratio * self.K4
+
+        # Full passivitet krever også kontroll av KYP-betingelsen
+        self.reset()
+
+    @staticmethod
+    def _wrap(angle):
+        # Holder heading mellom -pi og pi
+        return np.arctan2(np.sin(angle), np.cos(angle))
+
+    @staticmethod
+    def _J(psi):
+        # Rotasjonsmatrise fra body til NED
+        c = np.cos(psi)
+        s = np.sin(psi)
+
+        return np.array([
+            [c, -s, 0.0],
+            [s,  c, 0.0],
+            [0.0, 0.0, 1.0]
+        ])
+
+    def reset(self, eta0=None):
+        # Nullstiller observerens 15 tilstander
+        self.xi = np.zeros(6)      # Bølgebevegelse
+        self.eta = np.zeros(3)     # LF-posisjon og heading
+        self.nu = np.zeros(3)      # Hastighet i body-frame
+        self.bias = np.zeros(3)    # Miljøkrefter i NED
+
+        self.initialized = eta0 is not None
+
+        # Initialiserer med skipets startposisjon
+        if eta0 is not None:
+            eta0 = np.asarray(eta0, dtype=float).reshape(6)
+            self.eta = eta0[self.IDX].copy()
+            self.eta[2] = self._wrap(self.eta[2])
+
+    def _derivatives(self, y, tau):
+        # Predikert måling: LF-posisjon + bølgebevegelse
+        y_hat = self.eta + self.Cw @ self.xi
+
+        # Innovasjon: forskjell mellom målt og estimert posisjon
+        y_tilde = y - y_hat
+        y_tilde[2] = self._wrap(y_tilde[2])
+
+        J = self._J(self.eta[2])
+
+        # Bølgetilstander: ligning (7.18a)
+        dxi = self.Aw @ self.xi + self.K1 @ y_tilde
+
+        # Lavfrekvent posisjon: ligning (7.18b)
+        deta = J @ self.nu + self.K2 @ y_tilde
+
+        # Langsomt varierende bias: ligning (7.18c)
+        dbias = (
+            -self.bias / self.T_bias
+            + self.K3 @ y_tilde
+        )
+
+        # Hastighetsdynamikk: ligning (7.18d)
+        # G = 0 fordi skipet ikke har mooring stiffness
+        wrench = (
+            -self.D @ self.nu
+            + J.T @ self.bias
+            + tau
+            + J.T @ self.K4 @ y_tilde
+        )
+
+        # Løser M * dnu = wrench
+        dnu = np.linalg.solve(self.M, wrench)
+
+        return dxi, deta, dnu, dbias
 
     def step(self, t, dt, eta_measured, tau_est):
-        # TODO: implement the nonlinear passive observer.
-        return self._placeholder(eta_measured)
+        # Sjekker tidssteget
+        dt = float(dt)
+
+        if not np.isfinite(dt) or dt <= 0:
+            raise ValueError("dt must be positive and finite.")
+
+        # Henter North, East og heading fra målingene
+        y = np.asarray(
+            eta_measured, dtype=float
+        ).reshape(6)[self.IDX].copy()
+
+        # Henter surge, sway og yaw-moment fra forrige steg
+        tau = np.asarray(
+            tau_est, dtype=float
+        ).reshape(6)[self.IDX].copy()
+
+        if not np.all(np.isfinite(y)):
+            raise ValueError("Invalid pose measurement.")
+
+        if not np.all(np.isfinite(tau)):
+            raise ValueError("Invalid wrench input.")
+
+        # Initialiserer ved første måling hvis nødvendig
+        if not self.initialized:
+            self.eta = y.copy()
+            self.initialized = True
+
+        # Beregner observerens differensialligninger
+        dxi, deta, dnu, dbias = self._derivatives(y, tau)
+
+        # Integrerer tilstandene med Forward Euler
+        self.xi += dt * dxi
+        self.eta += dt * deta
+        self.nu += dt * dnu
+        self.bias += dt * dbias
+
+        # Sørger for korrekt heading
+        self.eta[2] = self._wrap(self.eta[2])
+
+        # Konverterer estimatene tilbake til 6-DOF
+        eta_out = np.zeros(6)
+        nu_out = np.zeros(6)
+        bias_out = np.zeros(6)
+
+        eta_out[self.IDX] = self.eta
+        nu_out[self.IDX] = self.nu
+        bias_out[self.IDX] = self.bias
+
+        # Returnerer estimert posisjon, hastighet og bias
+        return ObserverEstimate(
+            eta=eta_out,
+            nu=nu_out,
+            bias=bias_out
+        )
 
 
 class KalmanFilterObserver(Observer):
