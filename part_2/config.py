@@ -33,12 +33,10 @@ class RefAxisConfig:
     defaults here (overriding them only in ``run_case_part_2.py`` will not
     reach the checks).
     """
-    # (students): none of the three values below is a tuned value — they
-    # are placeholders. Choose the natural frequency, the damping ratio and
-    # the rate limit yourself, and justify each of them in the report.
-    wn: float = 0.1                     # natural frequency [rad/s] 
-    zeta: float = 1.0                   # damping ratio [-] 
-    rate_limit: Optional[float] = None  # max |x_dot| (m/s or rad/s); None = off
+    
+    wn: float = 0.03                        # natural frequency [rad/s] 
+    zeta: float = 1.0                       # damping ratio [-] 
+    rate_limit: Optional[float] = None      # max |x_dot| (m/s or rad/s); None = off
 
 
 @dataclass
@@ -80,12 +78,12 @@ class Part2SimConfig:
 
 @dataclass
 class TuningParameters:
-    # w_c = 0.12, zeta = 1. not tuned
+    # w_c = 0.12, zeta = 1. 
     Kp:  np.ndarray = field(default_factory=lambda: np.diag([8650, 10176]))
     Ki:  np.ndarray = field(default_factory=lambda: np.diag([130, 153]))
     Kd:  np.ndarray = field(default_factory=lambda: np.diag([163050, 157318]))
 
-    Kp_psi:   float = 7.8E5
+    Kp_psi:   float = 1.8E6
     Ki_psi:   float = 11785
     Kd_psi:   float = 1.4E7
 

@@ -267,264 +267,210 @@ class NonlinearPassiveObserver(Observer):
 
 
 class KalmanFilterObserver(Observer):
-    """15-state EKF for 3-DOF low-frequency DP state estimation.
+    """15-state nonlinear EKF
 
-    State:
-        x = [xi, xi_dot, eta, nu, bias], all reduced 3-DOF vectors.
+    State ordering (all angles in rad, all forces in SI):
+        x[ 0: 3] = xi_p   = [N_w, E_w, psi_w]   wave-frequency pose
+        x[ 3: 6] = xi_v   = d(xi_p)/dt          wave-frequency pose rate
+        x[ 6: 9] = eta    = [N, E, psi]        low-frequency NED pose
+        x[ 9:12] = nu     = [u, v, r]         LF BODY velocity
+        x[12:15] = b      = [b_N,b_E,b_psi]   slowly varying NED bias
 
-        xi      : wave-frequency pose contribution, NED
-        xi_dot  : derivative of wave-frequency contribution
-        eta     : low-frequency pose [N, E, psi], NED
-        nu      : [u, v, r], BODY
-        bias    : slowly varying environmental bias, NED
+    Continuous model:
+        dot(xi_p) = xi_v
+        dot(xi_v) = -Omega^2 xi_p - 2*zeta*Omega xi_v + w_wave
+        dot(eta)  = J(psi) nu
+        dot(nu)   = M^-1 (-D nu + J(psi)^T b + tau_previous)
+        dot(b)    = -T_b^-1 b + w_bias
+        y         = eta + xi_p + v
 
-    Input:
-        eta_measured : 6-DOF measured pose
-        tau_est      : previous-step desired BODY wrench
+    Forward Euler for state, F_k = I + dt * df/dx for covariance,
+    Q_k = dt * Q_c (white continuous-time process noise spectral density).
+    Corrected covariance is updated using the Joseph form.
     """
 
     name = "kalman"
 
-    # Reduced indices in the simulator's 6-DOF vectors.
-    IDX = np.array([0, 1, 5])
+    # Observer model coefficients 
+    DEFAULT_M = np.array([
+        [6.007e5, 0.0,      0.0],
+        [0.0,     7.067e5, -4.733e5],
+        [0.0,    -5.712e5,  5.456e7],
+    ])
+    DEFAULT_D = np.diag([1.118e3, 2.229e4, 1.950e6])
+
+    @staticmethod
+    def _wrap(angle: float) -> float:
+        return float(np.arctan2(np.sin(angle), np.cos(angle)))
+
+    @staticmethod
+    def _rotation(psi: float) -> np.ndarray:
+        c, s = np.cos(psi), np.sin(psi)
+        return np.array([[c, -s, 0.0],
+                         [s,  c, 0.0],
+                         [0.0, 0.0, 1.0]])
+
+    @staticmethod
+    def _drotation(psi: float) -> np.ndarray:
+        c, s = np.cos(psi), np.sin(psi)
+        return np.array([[-s, -c, 0.0],
+                         [ c, -s, 0.0],
+                         [0.0, 0.0, 0.0]])
 
     def __init__(
         self,
-        omega_w=0.8,                    # natural frequency of the modelled waves
-        zeta_w=0.7,                     # dampening ratio of wave model
-        T_bias=(300.0, 300.0, 300.0),   # time constant of enviroment bias, b
-        
-        # Process noise parameters: large value -> trust measurement more
-        q_w_N = 1e-6,
-        q_w_E = 1e-6,
-        q_w_psi = 1e-7,              
-        q_w_rate = 1e-5,   
-
-        q_eta_N = 1e-9,                        
-        q_eta_E = 1e-9,
-        q_eta_psi = 1e-8,
-        q_nu_u = 1e-6,
-        q_nu_v = 1e-7,
-        q_nu_r = 1e-7,
-
-        q_bias=1e-2,
-
-        # Measurement noise (e.g. waves)
-        R_diag=(0.05**2, 0.05**2, np.deg2rad(0.2)**2),  
+        *,
+        tp: float = 8.0,
+        wave_zeta: float = 0.15,
+        wave_std: tuple[float, float, float] = (0.30, 0.30, np.deg2rad(1.0)),
+        bias_tau: tuple[float, float, float] = (600.0, 600.0, 600.0),
+        bias_std: tuple[float, float, float] = (1.0e4, 1.0e4, 1.0e5),
+        acceleration_noise: tuple[float, float, float] = (0.005, 0.005, np.deg2rad(0.01)),
+        measurement_std: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        eta0_std: tuple[float, float, float] = (1.0, 1.0, np.deg2rad(3.0)),
+        nu0_std: tuple[float, float, float] = (0.05, 0.05, np.deg2rad(0.15)),
+        M: np.ndarray | None = None,
+        D: np.ndarray | None = None,
     ):
-        self.omega_w = float(omega_w)   # for second order wave frequency oscillator
-        self.zeta_w = float(zeta_w)     # -||-
-        self.T_bias = np.asarray(T_bias, dtype=float).reshape(3)
-        self.q_w_pose = np.array([
-            q_w_N,
-            q_w_E,
-            q_w_psi
-        ])
-        self.q_w_rate = float(q_w_rate)
-        self.q_eta = np.array([
-            q_eta_N,
-            q_eta_E,
-            q_eta_psi
-        ])
-        self.q_nu = np.array([
-            q_nu_u,
-            q_nu_v,
-            q_nu_r
-        ])
-        self.q_bias = float(q_bias)
+        self.M = np.asarray(self.DEFAULT_M if M is None else M, dtype=float).reshape(3, 3).copy()
+        self.D = np.asarray(self.DEFAULT_D if D is None else D, dtype=float).reshape(3, 3).copy()
+        self.M_inv = np.linalg.inv(self.M)
+        self.MinvD = self.M_inv @ self.D
 
-        self.R = np.diag(np.asarray(R_diag, dtype=float))
-        if np.any(self.R.diagonal() <= 0.0):
-            raise ValueError("R_diag must contain positive variances.")
-        if np.any(self.T_bias <= 0.0):
-            raise ValueError("Bias time constants must be positive.")
-        if self.omega_w <= 0.0 or self.zeta_w <= 0.0:
-            raise ValueError("omega_w and zeta_w must be positive.")
+        self.omega = 2.0 * np.pi / float(tp)
+        self.wave_zeta = float(wave_zeta)
+        self.wave_std = np.asarray(wave_std, dtype=float).reshape(3).copy()
+        self.bias_tau = np.asarray(bias_tau, dtype=float).reshape(3).copy()
+        self.bias_std = np.asarray(bias_std, dtype=float).reshape(3).copy()
+        accel_std = np.asarray(acceleration_noise, dtype=float).reshape(3)
+        meas_std = np.asarray(measurement_std, dtype=float).reshape(3)
+        eta0_std = np.asarray(eta0_std, dtype=float).reshape(3)
+        nu0_std = np.asarray(nu0_std, dtype=float).reshape(3)
 
-        # Gunnerus matrices 
-        self.M = np.array([
-            [6.007e5, 0.0,     0.0],
-            [0.0,     7.067e5, -4.733e5],
-            [0.0,    -5.712e5,  5.456e7],
-        ])
-        self.D = np.diag([1.118e3, 2.229e4, 1.950e6])
+        self.omega2 = np.full(3, self.omega ** 2)
+        self.wave_damping = np.full(3, 2.0 * self.wave_zeta * self.omega)
 
-        # Solve linear systems rather than forming inv(M).
-        self.M_inv_D = np.linalg.solve(self.M, self.D)
-        self.M_inv = np.linalg.solve(self.M, np.eye(3))
-
+        # Output y = eta + C_w xi, where xi = [xi_p, xi_v] and C_w = [I, 0].
+        self.Cw = np.hstack((np.eye(3), np.zeros((3, 3))))
         self.H = np.zeros((3, 15))
-        self.H[:, 0:3] = np.eye(3)   # wave pose contribution
-        self.H[:, 6:9] = np.eye(3)   # low-frequency pose
+        self.H[:, 0:3] = np.eye(3)
+        self.H[:, 6:9] = np.eye(3)
+        self.I15 = np.eye(15)
 
+        # Continuous-time WHITE-NOISE intensity Qc (not a per-step covariance).
+        # The oscillator acceleration intensity is chosen so that its stationary
+        # displacement standard deviation is wave_std for the chosen zeta/omega:
+        # q_wave = 4*zeta*omega**3*wave_std**2.
+        # Ornstein-Uhlenbeck b has q_bias = 2*bias_std**2 / bias_tau.
+        self.Qc = np.zeros((15, 15))
+        self.Qc[3:6, 3:6] = np.diag(4.0 * self.wave_zeta * self.omega**3 * self.wave_std**2)
+        self.Qc[9:12, 9:12] = np.diag(accel_std**2)
+        self.Qc[12:15, 12:15] = np.diag(2.0 * self.bias_std**2 / self.bias_tau)
+
+        # Mandatory simulations use ideal pose measurements -> R = 0.
+        # For prescribed extra-credit GNSS/gyro noise, pass:
+        # measurement_std=(0.20, 0.20, np.deg2rad(0.20)).
+        self.R = np.diag(meas_std**2)
+
+        self.P0 = np.diag(np.r_[
+            self.wave_std**2,
+            (self.omega * self.wave_std)**2,
+            eta0_std**2,
+            nu0_std**2,
+            self.bias_std**2,
+        ])
         self.reset()
 
-    @staticmethod
-    def _wrap(angle):
-        return np.arctan2(np.sin(angle), np.cos(angle))
-
-    @staticmethod
-    def _J(psi):
-        c, s = np.cos(psi), np.sin(psi)
-        return np.array([
-            [c, -s, 0.0],
-            [s,  c, 0.0],
-            [0.0, 0.0, 1.0],
-        ])
-
-    # dJ/dpsi
-    @staticmethod
-    def _dJ_dpsi(psi):
-        c, s = np.cos(psi), np.sin(psi)
-        return np.array([
-            [-s, -c, 0.0],
-            [ c, -s, 0.0],
-            [0.0, 0.0, 0.0],
-        ])
-
-    # dJ^T/dpsi
-    @staticmethod
-    def _dJT_dpsi(psi):
-        c, s = np.cos(psi), np.sin(psi)
-        return np.array([
-            [-s,  c, 0.0],
-            [-c, -s, 0.0],
-            [0.0, 0.0, 0.0],
-        ])
-
-    def reset(self, eta0=None):
-        """Reset estimates and covariance before each simulation."""
+    def reset(self, eta0: np.ndarray | None = None):
+        """Reset for a simulation run; initialize LF pose from TRUE eta0."""
         self.x = np.zeros(15)
-
         if eta0 is not None:
-            eta0 = np.asarray(eta0, dtype=float).reshape(6)
-            self.x[6:9] = eta0[self.IDX]
+            pose = np.asarray(eta0, dtype=float).reshape(6)
+            self.x[6:9] = pose[[0, 1, 5]]
+            self.x[8] = self._wrap(self.x[8])
+        self.P = self.P0.copy()
+        self.Qk = None  # Set at each step because dt may be 0.1 s or 0.01 s
+        self.last_innovation = np.zeros(3)
 
-        # Initial covariance: high uncertainty in velocity and bias.
-        p0_diag = np.array(
-            [1.0, 1.0, 0.1,       # xi
-             1.0, 1.0, 0.1,       # xi_dot
-             0.1, 0.1, 0.02,      # eta
-             1.0, 1.0, 0.1,       # nu
-             1e8, 1e8, 1e10]      # bias [units are N and Nm]
-        )
-        self.P = np.diag(p0_diag)
-
-        self.initialized = eta0 is not None
-
-    def _continuous_model(self, x, tau):
-        """Return f(x, tau) and the continuous-time Jacobian F."""
-        xi = x[0:3]
-        xi_dot = x[3:6]
-        eta = x[6:9]
+    def _dynamics_and_jacobian(self, x: np.ndarray, tau: np.ndarray):
+        """Continuous drift f(x,tau) and its exact analytic Jacobian A=df/dx."""
+        xi_p = x[0:3]
+        xi_v = x[3:6]
+        psi = x[8]
         nu = x[9:12]
-        bias = x[12:15]
+        b = x[12:15]
 
-        psi = eta[2]
-        J = self._J(psi)
-        JT = J.T
-
-        # Second-order wave-frequency oscillator.
-        w = self.omega_w
-        zeta = self.zeta_w
-
-        # dynamics model - time continous
+        J = self._rotation(psi)
+        dJ = self._drotation(psi)
         f = np.zeros(15)
-        f[0:3] = xi_dot
-        f[3:6] = -(w**2) * xi - 2.0 * zeta * w * xi_dot         # xi''
-        f[6:9] = J @ nu                                         # Low-frequency vessel kinematics in NED.
-        f[9:12] = self.M_inv @ (-self.D @ nu + JT @ bias + tau) # vessel dynamics
-        f[12:15] = -bias / self.T_bias                          # slowly varying bias in NED.
+        f[0:3] = xi_v
+        f[3:6] = -self.omega2 * xi_p - self.wave_damping * xi_v
+        f[6:9] = J @ nu
+        f[9:12] = self.M_inv @ (-self.D @ nu + J.T @ b + tau)
+        f[12:15] = -b / self.bias_tau
 
-        # Analytic continuous-time Jacobian.
-        F = np.zeros((15, 15))        
-        F[0:3, 3:6] = np.eye(3)                                 # wave oscillator
-        F[3:6, 0:3] = -(w**2) * np.eye(3)
-        F[3:6, 3:6] = -2.0 * zeta * w * np.eye(3)
-        F[6:9, 8] = self._dJ_dpsi(psi) @ nu                     # eta_dot = J(psi) @ nu
-        F[6:9, 9:12] = J
-        F[9:12, 8] = (self.M_inv @ self._dJT_dpsi(psi) @ bias)  # nu_dot = ...
-        F[9:12, 9:12] = -self.M_inv_D
-        F[9:12, 12:15] = self.M_inv @ JT
-        F[12:15, 12:15] = -np.diag(1.0 / self.T_bias)           # bias decay
+        A = np.zeros((15, 15))
+        A[0:3, 3:6] = np.eye(3)
+        A[3:6, 0:3] = -np.diag(self.omega2)
+        A[3:6, 3:6] = -np.diag(self.wave_damping)
+        A[6:9, 9:12] = J
+        A[6:9, 8] = dJ @ nu
+        A[9:12, 9:12] = -self.MinvD
+        A[9:12, 12:15] = self.M_inv @ J.T
+        A[9:12, 8] = self.M_inv @ (dJ.T @ b)
+        A[12:15, 12:15] = -np.diag(1.0 / self.bias_tau)
+        return f, A
 
-        return f, F
-
-    def _process_covariance(self, dt):
-        """Discrete process covariance for the Euler model."""
-        q_diag = np.array(
-            self.q_w_pose.tolist()
-            + [self.q_w_rate] * 3
-            + self.q_eta.tolist()
-            + self.q_nu.tolist()
-            + [self.q_bias] * 3
-        )
-        return np.diag(q_diag * dt)     # Q_D = Q_c * dt, 15x15 covariance matrix
-
-    def step(self, t, dt, eta_measured, tau_est):
+    def step(
+        self, t: float, dt: float, eta_measured: np.ndarray, tau_est: np.ndarray
+    ) -> ObserverEstimate:
         dt = float(dt)
+        eta6 = np.asarray(eta_measured, dtype=float).reshape(6)
+        tau6 = np.asarray(tau_est, dtype=float).reshape(6)
+        y = eta6[[0, 1, 5]]  # NED pose, measured; NEVER read measured velocity
+        tau = tau6[[0, 1, 5]]  # BODY previous desired wrench (N,N,Nm)
 
-        eta_measured = np.asarray(eta_measured, dtype=float).reshape(6)
-        tau_est = np.asarray(tau_est, dtype=float).reshape(6)
-        y = eta_measured[self.IDX]
-        tau = tau_est[self.IDX]
-
-        # Initialise the LF pose from the first available measurement.
-        if not self.initialized:
-            self.x[6:9] = y
-            self.initialized = True
-
-        # 1. PREDICTION
-        f, F = self._continuous_model(self.x, tau)
-
+        # 1) Nonlinear time update (explicit Euler), using tau_c[k-1].
+        f, A = self._dynamics_and_jacobian(self.x, tau)
         x_pred = self.x + dt * f
         x_pred[8] = self._wrap(x_pred[8])
+        F = self.I15 + dt * A
+        self.Qk = dt * self.Qc
+        P_pred = F @ self.P @ F.T + self.Qk
+        P_pred = 0.5 * (P_pred + P_pred.T)
 
-        Fd = np.eye(15) + dt * F
-        Qd = self._process_covariance(dt)
-
-        P_pred = Fd @ self.P @ Fd.T + Qd
-        P_pred = 0.5 * (P_pred + P_pred.T)          # secures that P:pred is symmentric
-
-        # 2. MEASUREMENT CORRECTION
-        y_pred = self.H @ x_pred
-        innovation = y - y_pred
+        # 2) Wrapped innovation, y_hat = eta_LF + eta_WF.
+        innovation = y - self.H @ x_pred
         innovation[2] = self._wrap(innovation[2])
-
-        # K = P_pred H.T inv(S), calculated without explicit inverse.
         S = self.H @ P_pred @ self.H.T + self.R
+        S = 0.5 * (S + S.T)
+        # K = P_pred H^T S^-1, solved as a 3x3 linear system.
         K = np.linalg.solve(S, self.H @ P_pred).T
 
+        # 3) Measurement correction.  Joseph form preserves covariance PSD.
         self.x = x_pred + K @ innovation
         self.x[8] = self._wrap(self.x[8])
-
-        # Joseph covariance update for numerical robustness.
-        I_KH = np.eye(15) - K @ self.H
-        self.P = (I_KH @ P_pred @ I_KH.T+ K @ self.R @ K.T)
+        IKH = self.I15 - K @ self.H
+        self.P = IKH @ P_pred @ IKH.T + K @ self.R @ K.T
         self.P = 0.5 * (self.P + self.P.T)
+        self.last_innovation = innovation.copy()
 
-        # 3. RETURN THE FULL 6-DOF INTERFACE
+        # Expand 3DOF estimates to the simulator's expected 6DOF layout:
+        # [surge/sway/heave/roll/pitch/yaw] with unused channels equal zero.
+        wave_pose_out = np.zeros(6)
         eta_out = np.zeros(6)
         nu_out = np.zeros(6)
         bias_out = np.zeros(6)
-
-        eta_out[self.IDX] = self.x[6:9]
-        nu_out[self.IDX] = self.x[9:12]
-        bias_out[self.IDX] = self.x[12:15]
-
+        wave_pose_out[[0, 1, 5]] = self.x[0:3]
+        eta_out[[0, 1, 5]] = self.x[6:9]
+        nu_out[[0, 1, 5]] = self.x[9:12]
+        bias_out[[0, 1, 5]] = self.x[12:15]
         return ObserverEstimate(
             eta=eta_out,
             nu=nu_out,
             bias=bias_out,
-            wave_pose=self._expand_reduced(self.x[0:3]),
+            wave_pose=wave_pose_out
         )
-
-    @classmethod
-    def _expand_reduced(cls, value):
-        """Expand a reduced [N, E, psi] vector into the 6-DOF interface."""
-        out = np.zeros(6)
-        out[cls.IDX] = value
-        return out
 
 
 def select_observer(kind: str, **kwargs) -> Observer:
@@ -537,4 +483,3 @@ def select_observer(kind: str, **kwargs) -> Observer:
         return choices[kind](**kwargs)
     except KeyError as exc:
         raise ValueError(f"observer_type must be one of {tuple(choices)}") from exc
-

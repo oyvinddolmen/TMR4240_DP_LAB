@@ -65,7 +65,7 @@ class RefAxisConfig:
 
 @dataclass
 class TuningParameters:
-    # w_c = 0.12, zeta = 1. not tuned
+    # w_c = 0.12, zeta = 1. 
     Kp:  np.ndarray = field(default_factory=lambda: np.diag([8650, 10176]))
     Ki:  np.ndarray = field(default_factory=lambda: np.diag([130, 153]))
     Kd:  np.ndarray = field(default_factory=lambda: np.diag([163050, 157318]))
