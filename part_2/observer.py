@@ -126,21 +126,21 @@ class KalmanFilterObserver(Observer):
             [0,       -5.712e5,   5.456e7]
         ])
         self.D = np.diag([1.118e3, 2.229e4, 1.950e6])
-        self.M_inv = np.linalg.inv(self.M)
+        self.M_inv = np.linalg.inv(self.M)  
         self.MinvD = self.M_inv @ self.D
 
         # Wave model
         Tp = 8.0
         self.omega = 2.0 * np.pi / Tp
-        self.wave_zeta = 0.15
-        self.wave_std = np.array([1.5, 1.5, np.deg2rad(3.5)])
+        self.wave_zeta = 0.10
+        self.wave_std = np.array([0.32, 0.4, np.deg2rad(0.5)])
 
         # Biasmodel
         self.bias_tau = np.array([600.0, 600.0, 600.0])
         self.bias_std = np.array([400, 400, 1.5e4])
 
         # Process and measurement noise
-        self.accel_std = np.array([0.003, 0.003, np.deg2rad(0.01)])
+        self.accel_std = np.array([0.003, 0.003, np.deg2rad(0.001)])
         self.meas_std = np.array([0.0, 0.0, 0.0])
 
         # Initial uncertanity
@@ -163,17 +163,13 @@ class KalmanFilterObserver(Observer):
         self.I15 = np.eye(15)
 
         # Continuous-time WHITE-NOISE intensity Qc (not a per-step covariance).
-        # The oscillator acceleration intensity is chosen so that its stationary
-        # displacement standard deviation is wave_std for the chosen zeta/omega:
-        # q_wave = 4*zeta*omega**3*wave_std**2.
-        # Ornstein-Uhlenbeck b has q_bias = 2*bias_std**2 / bias_tau.
         self.Qc = np.zeros((15, 15))
-        self.Qc[3:6, 3:6] = np.diag(self.wave_std**2)
+        self.Qc[3:6, 3:6] = np.diag(4 * self.wave_zeta * self.omega**3 * self.wave_std**2)
         self.Qc[9:12, 9:12] = np.diag(self.accel_std**2)
-        self.Qc[12:15, 12:15] = np.diag(self.bias_std**2)
+        self.Qc[12:15, 12:15] = np.diag(2 * self.bias_std**2/self.bias_tau)
 
         # Mandatory simulations use ideal pose measurements -> R = 0.
-        # For prescribed extra-credit GNSS/gyro noise, pass:
+        # For GNSS/gyro noise, pass:
         # measurement_std=(0.20, 0.20, np.deg2rad(0.20)).
         self.R = np.diag(self.meas_std**2)
 
