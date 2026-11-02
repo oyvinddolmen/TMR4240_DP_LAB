@@ -80,9 +80,9 @@ class KalmanFilterObserver(Observer):
     State ordering (all angles in rad, all forces in SI):
         x[ 0: 3] = xi_p   = [N_w, E_w, psi_w]   wave-frequency pose
         x[ 3: 6] = xi_v   = d(xi_p)/dt          wave-frequency pose rate
-        x[ 6: 9] = eta    = [N, E, psi]        low-frequency NED pose
-        x[ 9:12] = nu     = [u, v, r]         LF BODY velocity
-        x[12:15] = b      = [b_N,b_E,b_psi]   slowly varying NED bias
+        x[ 6: 9] = eta    = [N, E, psi]         low-frequency NED pose
+        x[ 9:12] = nu     = [u, v, r]           LF BODY velocity
+        x[12:15] = b      = [b_N,b_E,b_psi]     slowly varying NED bias
 
     Continuous model:
         dot(xi_p) = xi_v
@@ -98,14 +98,6 @@ class KalmanFilterObserver(Observer):
     """
 
     name = "kalman"
-
-    # Observer model coefficients 
-    DEFAULT_M = np.array([
-        [6.007e5, 0.0,      0.0],
-        [0.0,     7.067e5, -4.733e5],
-        [0.0,    -5.712e5,  5.456e7],
-    ])
-    DEFAULT_D = np.diag([1.118e3, 2.229e4, 1.950e6])
 
     @staticmethod
     def _wrap(angle: float) -> float:
@@ -125,38 +117,43 @@ class KalmanFilterObserver(Observer):
                          [ c, -s, 0.0],
                          [0.0, 0.0, 0.0]])
 
-    def __init__(
-        self,
-        *,
-        tp: float = 8.0,
-        wave_zeta: float = 0.15,
-        wave_std: tuple[float, float, float] = (0.30, 0.30, np.deg2rad(1.0)),
-        bias_tau: tuple[float, float, float] = (600.0, 600.0, 600.0),
-        bias_std: tuple[float, float, float] = (1.0e4, 1.0e4, 1.0e5),
-        acceleration_noise: tuple[float, float, float] = (0.005, 0.005, np.deg2rad(0.01)),
-        measurement_std: tuple[float, float, float] = (0.0, 0.0, 0.0),
-        eta0_std: tuple[float, float, float] = (1.0, 1.0, np.deg2rad(3.0)),
-        nu0_std: tuple[float, float, float] = (0.05, 0.05, np.deg2rad(0.15)),
-        M: np.ndarray | None = None,
-        D: np.ndarray | None = None,
-    ):
-        self.M = np.asarray(self.DEFAULT_M if M is None else M, dtype=float).reshape(3, 3).copy()
-        self.D = np.asarray(self.DEFAULT_D if D is None else D, dtype=float).reshape(3, 3).copy()
+    def __init__(self):
+
+        # Mass and dampening matrices
+        self.M = np.array([
+            [6.007e5,       0,          0],
+            [0,        7.067e5,  -4.733e5],
+            [0,       -5.712e5,   5.456e7]
+        ])
+        self.D = np.diag([1.118e3, 2.229e4, 1.950e6])
         self.M_inv = np.linalg.inv(self.M)
         self.MinvD = self.M_inv @ self.D
 
-        self.omega = 2.0 * np.pi / float(tp)
-        self.wave_zeta = float(wave_zeta)
-        self.wave_std = np.asarray(wave_std, dtype=float).reshape(3).copy()
-        self.bias_tau = np.asarray(bias_tau, dtype=float).reshape(3).copy()
-        self.bias_std = np.asarray(bias_std, dtype=float).reshape(3).copy()
-        accel_std = np.asarray(acceleration_noise, dtype=float).reshape(3)
-        meas_std = np.asarray(measurement_std, dtype=float).reshape(3)
-        eta0_std = np.asarray(eta0_std, dtype=float).reshape(3)
-        nu0_std = np.asarray(nu0_std, dtype=float).reshape(3)
+        # Wave model
+        Tp = 8.0
+        self.omega = 2.0 * np.pi / Tp
+        self.wave_zeta = 0.15
+        self.wave_std = np.array([1.5, 1.5, np.deg2rad(3.5)])
 
-        self.omega2 = np.full(3, self.omega ** 2)
-        self.wave_damping = np.full(3, 2.0 * self.wave_zeta * self.omega)
+        # Biasmodel
+        self.bias_tau = np.array([600.0, 600.0, 600.0])
+        self.bias_std = np.array([400, 400, 1.5e4])
+
+        # Process and measurement noise
+        self.accel_std = np.array([0.003, 0.003, np.deg2rad(0.01)])
+        self.meas_std = np.array([0.0, 0.0, 0.0])
+
+        # Initial uncertanity
+        self.eta0_std = np.array([1.0, 1.0, np.deg2rad(3.0)])
+        self.nu0_std = np.array([0.05, 0.05, np.deg2rad(0.15)])
+
+        # Parameters for WF-oscillator
+        self.omega2 = np.array([ self.omega**2, self.omega**2, self.omega**2])
+        self.wave_damping = np.array([
+            2.0 * self.wave_zeta * self.omega,
+            2.0 * self.wave_zeta * self.omega,
+            2.0 * self.wave_zeta * self.omega
+        ])
 
         # Output y = eta + C_w xi, where xi = [xi_p, xi_v] and C_w = [I, 0].
         self.Cw = np.hstack((np.eye(3), np.zeros((3, 3))))
@@ -171,20 +168,20 @@ class KalmanFilterObserver(Observer):
         # q_wave = 4*zeta*omega**3*wave_std**2.
         # Ornstein-Uhlenbeck b has q_bias = 2*bias_std**2 / bias_tau.
         self.Qc = np.zeros((15, 15))
-        self.Qc[3:6, 3:6] = np.diag(4.0 * self.wave_zeta * self.omega**3 * self.wave_std**2)
-        self.Qc[9:12, 9:12] = np.diag(accel_std**2)
-        self.Qc[12:15, 12:15] = np.diag(2.0 * self.bias_std**2 / self.bias_tau)
+        self.Qc[3:6, 3:6] = np.diag(self.wave_std**2)
+        self.Qc[9:12, 9:12] = np.diag(self.accel_std**2)
+        self.Qc[12:15, 12:15] = np.diag(self.bias_std**2)
 
         # Mandatory simulations use ideal pose measurements -> R = 0.
         # For prescribed extra-credit GNSS/gyro noise, pass:
         # measurement_std=(0.20, 0.20, np.deg2rad(0.20)).
-        self.R = np.diag(meas_std**2)
+        self.R = np.diag(self.meas_std**2)
 
         self.P0 = np.diag(np.r_[
             self.wave_std**2,
             (self.omega * self.wave_std)**2,
-            eta0_std**2,
-            nu0_std**2,
+            self.eta0_std**2,
+            self.nu0_std**2,
             self.bias_std**2,
         ])
         self.reset()
@@ -235,7 +232,7 @@ class KalmanFilterObserver(Observer):
         dt = float(dt)
         eta6 = np.asarray(eta_measured, dtype=float).reshape(6)
         tau6 = np.asarray(tau_est, dtype=float).reshape(6)
-        y = eta6[[0, 1, 5]]  # NED pose, measured; NEVER read measured velocity
+        y = eta6[[0, 1, 5]]  # NED pose, measured. Not read measured velocity
         tau = tau6[[0, 1, 5]]  # BODY previous desired wrench (N,N,Nm)
 
         # 1) Nonlinear time update (explicit Euler), using tau_c[k-1].
@@ -245,7 +242,7 @@ class KalmanFilterObserver(Observer):
         F = self.I15 + dt * A
         self.Qk = dt * self.Qc
         P_pred = F @ self.P @ F.T + self.Qk
-        P_pred = 0.5 * (P_pred + P_pred.T)
+        P_pred = 0.5 * (P_pred + P_pred.T)      # make sure that it is symmetric
 
         # 2) Wrapped innovation, y_hat = eta_LF + eta_WF.
         innovation = y - self.H @ x_pred
