@@ -106,7 +106,6 @@ def plot_heading_decomposition(logs, figsize=(11, 4)):
     fig, ax = plt.subplots(figsize=figsize)
     ax.plot(logs.t, to_deg * psi_lf, label=r"$\hat\psi_{\mathrm{LF}}$")
     ax.plot(logs.t, to_deg * wave_psi, label=r"$C_{w,\psi}\hat\xi$ (yaw contribution)")
-    ax.plot(logs.t, to_deg * psi_total, "--", label=r"LF + wave estimate")
     ax.plot(logs.t, to_deg * psi_measured, alpha=0.65, label=r"$\psi_m$")
     ax.set_xlabel("Time [s]")
     ax.set_ylabel("Heading [deg]")

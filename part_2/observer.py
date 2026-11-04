@@ -325,18 +325,18 @@ class KalmanFilterObserver(Observer):
         Tp = 8.0
         self.omega = 2.0 * np.pi / Tp
         self.wave_zeta = 0.10
-        self.wave_std = np.array([0.32, 0.4, np.deg2rad(0.5)])
+        self.wave_std = np.array([0.32, 0.4, np.deg2rad(1)])
 
-        # Biasmodel
+        # Bias model
         self.bias_tau = np.array([600.0, 600.0, 600.0])
-        self.bias_std = np.array([400, 400, 1.5e4])
+        self.bias_std = np.array([400, 400, 850])
 
         # Process and measurement noise
-        self.accel_std = np.array([0.003, 0.003, np.deg2rad(0.001)])
-        self.meas_std = np.array([0.0, 0.0, 0.0])
+        self.accel_std = np.array([0.001, 0.001, np.deg2rad(0.0005)])
+        self.meas_std = np.array([0.2, 0.2, np.deg2rad(0.2)])
 
         # Initial uncertanity
-        self.eta0_std = np.array([1.0, 1.0, np.deg2rad(3.0)])
+        self.eta0_std = np.array([0.1, 0.1, np.deg2rad(0.2)])
         self.nu0_std = np.array([0.05, 0.05, np.deg2rad(0.15)])
 
         # Parameters for WF-oscillator
@@ -354,17 +354,16 @@ class KalmanFilterObserver(Observer):
         self.H[:, 6:9] = np.eye(3)
         self.I15 = np.eye(15)
 
-        # Continuous-time WHITE-NOISE intensity Qc (not a per-step covariance).
+        # Continuous-time process covariance
         self.Qc = np.zeros((15, 15))
         self.Qc[3:6, 3:6] = np.diag(4 * self.wave_zeta * self.omega**3 * self.wave_std**2)
         self.Qc[9:12, 9:12] = np.diag(self.accel_std**2)
         self.Qc[12:15, 12:15] = np.diag(2 * self.bias_std**2/self.bias_tau)
 
-        # Mandatory simulations use ideal pose measurements -> R = 0.
-        # For GNSS/gyro noise, pass:
-        # measurement_std=(0.20, 0.20, np.deg2rad(0.20)).
+        # Measurement Noise Covariance
         self.R = np.diag(self.meas_std**2)
 
+        # Inital Estimation Error Covariance 
         self.P0 = np.diag(np.r_[
             self.wave_std**2,
             (self.omega * self.wave_std)**2,

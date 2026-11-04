@@ -16,6 +16,8 @@ are 6-DOF; these plots show the 3-DOF components [surge, sway, yaw]
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -155,8 +157,8 @@ def plot_wind(logs, figsize=(10, 6)):
     return fig
 
 
-def plot_dashboard(logs, figsize=(13, 8)):
-    """Compact overview: trajectory, tracking errors, wrench, and thrust."""
+def plot_dashboard(logs, figsize=(13, 8), *, save_thrust_pdf=False):
+    """Compact overview; optionally export only the thrust panel to thrust.pdf."""
     fig, axes = plt.subplots(2, 3, figsize=figsize)
     t = logs.t
 

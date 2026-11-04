@@ -72,7 +72,7 @@ SEED = 123
 # there first, then set this to "nonlinear_passive" or "kalman" and justify
 # the choice in the report.  It is None until you choose: every preset that
 # needs it stops with a message instead of picking one for you.
-SELECTED_OBSERVER = "kalman"
+SELECTED_OBSERVER = "kalman"    # nonlinear_passive or kalman
 
 # Initial observer error used by the convergence demonstration in Part 2,
 # Simulation 4.  The engine resets every observer at the TRUE initial pose, so
@@ -168,8 +168,9 @@ def run(cfg, eta_cmd, env, controller=None):
     return sim.run(eta_cmd, current=current, wind=wind, waves=waves)
 
 
-def standard_plots(logs, *, setpoints=False, observer=False, environment_plots=False):
-    plot_dashboard(logs)
+def standard_plots(logs, *, setpoints=False, observer=False, environment_plots=False,
+                   save_thrust_pdf=False):
+    plot_dashboard(logs, save_thrust_pdf=save_thrust_pdf)
     plot_time_histories(logs)
     plot_xy(logs)
     if setpoints:
@@ -246,9 +247,9 @@ def sim4():
             logs = run(cfg, np.zeros(6), environment(**env_kw), controller=fixed)
             plot_observer(logs).suptitle(f"Observer {kind}, {label}")
             plot_observer_error(logs).suptitle(f"Observer {kind}, {label} — estimation errors")
+
             if kind == "kalman":
-                plot_heading_decomposition(logs).suptitle(
-                    f"Observer {kind}, {label} — heading decomposition")
+                plot_heading_decomposition(logs)
             out[(kind, label)] = logs
     # Convergence: start the estimate away from the truth (the engine resets it
     # ON the truth), then watch the error decay.  Quote the convergence time.
@@ -280,7 +281,8 @@ def sim4():
         cfg = Part2SimConfig(dt=DT, T=600.0, use_observer=use_obs,
                              observer_type=selected_observer())
         logs = run(cfg, np.zeros(6), environment())
-        standard_plots(logs, setpoints=True, observer=use_obs)
+        standard_plots(logs, setpoints=True, observer=use_obs,
+                       save_thrust_pdf=not use_obs)
         plt.gcf().suptitle(f"Closed loop — {label}")
         out[("closed loop", label)] = logs
     return out

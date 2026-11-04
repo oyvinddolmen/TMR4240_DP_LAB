@@ -70,7 +70,7 @@ class Part2SimConfig:
     # plumbing default so the field is never empty, NOT a recommendation:
     # every preset that needs an observer names the type explicitly, and which
     # one you adopt is your Part 2, Simulation 4 decision.
-    observer_type: str = "nonlinear_passive"
+    observer_type: str = "kalman"
     use_sensor_noise: bool = False
     thruster_dynamics: bool = True
     bypass_actuators: bool = False
