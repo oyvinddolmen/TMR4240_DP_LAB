@@ -77,6 +77,19 @@ def load_wind_coefficients() -> Tuple[np.ndarray, np.ndarray]:
     return table[:, 0], table[:, 1:]
 
 
+def _davenport_spectrum(f: np.ndarray, Uref: float, k: float) -> np.ndarray:
+    """
+    Davenport along-wind gust spectrum (the spectrum chosen for the
+    gust component.
+
+    f    : frequency [Hz]
+    Uref : reference (mean) wind speed [m/s]
+    k    : surface drag coefficient (~0.003 for open sea)
+    """
+    x = 1200.0 * f / Uref
+    return 4.0 * k * Uref ** 2 * x ** 2 / (f * (1.0 + x ** 2) ** (4.0 / 3.0))
+
+
 class Wind:
     """Template for the Part 2 wind model.
 
@@ -120,7 +133,6 @@ class Wind:
                  gust_params: Dict | None = None, sigma_dir: float = 0.0,
                  tau_dir: float = 300.0, dir_limit: float = np.deg2rad(5.0),
                  seed: int | None = None):
-        # TODO: Store and use the parameters above in step().
         self.mean_speed = float(mean_speed)
         self.beta = float(beta)
         self.semantics = semantics
@@ -133,6 +145,60 @@ class Wind:
         self.dir_limit = float(dir_limit)
         self.seed = seed
 
+        # --- load the coefficient table once, reused every step() call ---
+        self._alpha_deg, self._C6 = load_wind_coefficients()
+
+        # --- RNG, shared by every stochastic component so a single seed
+        #     reproduces the whole run (Part 1 convention) ---
+        self._rng = np.random.default_rng(self.seed)
+
+        # --- mean direction, converted ONCE to "towards" (Part 1
+        #     convention: "from" is meteorological default, internally we
+        #     always work with the direction the wind blows TOWARDS) ---
+        self._beta_towards_mean = (self.beta + np.pi if self.semantics == "from"
+                                    else self.beta)
+
+        # --- slowly varying SPEED (Part 1): state of the mean-reverting
+        #     (Ornstein-Uhlenbeck) process, dU/dt + U/tau_slow = w(t) ---
+        self._slow_component = 0.0  # current deviation from mean_speed [m/s]
+
+        # --- slowly varying DIRECTION (new in Part 2): same OU recipe as
+        #     the slow speed, applied to a direction offset instead, then
+        #     hard-clipped every step to +/- dir_limit ---
+        self._dbeta = 0.0  # current direction offset [rad]
+
+        # --- GUST speed (new in Part 2): precompute a fixed set of
+        #     frequencies, spectral amplitudes and random phases ONCE
+        #     (seeded), then sum them at whatever t is passed to step().
+        #     This keeps the gust a pure, reproducible function of time. ---
+        gp = self.gust_params ##Dictionnary
+        self.gust_n_harmonics = int(gp.get("n_harmonics", 50)) ##50 different harmonics
+        self.gust_f_min = float(gp.get("f_min", 1.0 / 600.0))  # 10 min period, slowest gust
+        self.gust_f_max = float(gp.get("f_max", 1.0))          # 1 s period, fastest gust
+        self.gust_k = float(gp.get("k", 0.003))                # open-sea drag coeff
+        Uref = max(self.mean_speed, 0.1)  # Davenport spectrum reference speed, not to divide by 0
+
+        if self.gust:
+            f = np.logspace(np.log10(self.gust_f_min),
+                             np.log10(self.gust_f_max),
+                             self.gust_n_harmonics)
+            df = np.gradient(f)  # bin widths for log-spaced frequencies
+            S = _davenport_spectrum(f, Uref, self.gust_k)
+            self._gust_f = f
+            self._gust_amp = np.sqrt(2.0 * S * df)
+            self._gust_phase = self._rng.uniform(0.0, 2.0 * np.pi, size=f.size)
+        else:
+            self._gust_f = np.array([])
+            self._gust_amp = np.array([])
+            self._gust_phase = np.array([])
+
+    def _gust_speed(self, t: float) -> float:
+        """Zero-mean gust speed at time t, from the precomputed harmonics."""
+        if not self.gust or self._gust_f.size == 0:
+            return 0.0
+        return float(np.sum(self._gust_amp *
+                             np.cos(2.0 * np.pi * self._gust_f * t + self._gust_phase)))
+
     def step(
         self,
         t: float,
@@ -140,9 +206,79 @@ class Wind:
         eta: np.ndarray,
         nu: np.ndarray,
     ) -> Tuple[np.ndarray, Dict[str, float]]:
-        # TODO: Replace this placeholder with your wind load model.
-        # Default: no wind loads.
-        tau_w6 = np.zeros(6)
-        info = {"U": 0.0, "beta_ned": 0.0, "alpha_body": 0.0,
-                "U_mean": 0.0, "U_gust": 0.0}
+        # ------------------------------------------------------------
+        # 1) Ambient wind speed: mean + slowly-varying component
+        #    (identical to Part 1).
+        # ------------------------------------------------------------
+        if self.sigma_slow > 0.0 and self.tau_slow > 0.0:
+            w_k = self._rng.normal(0.0, 1.0)  # N(0, 1)
+            # dU/dt + U/tau_slow = w   =>   Euler-Maruyama step. The driving
+            # noise intensity is scaled so the PROCESS itself (not the raw
+            # noise) has stationary standard deviation sigma_slow, i.e.
+            # Var[U_slow] = sigma_sde^2 * tau_slow / 2 = sigma_slow^2.
+            sigma_slow_sde = self.sigma_slow / np.sqrt(self.tau_slow / 2.0)
+            self._slow_component += (
+                -self._slow_component / self.tau_slow * dt
+                + sigma_slow_sde * np.sqrt(dt) * w_k
+            )
+        U_mean = self.mean_speed + self._slow_component
+
+        # --- gust speed, added on top of the mean+slow speed (Part 2) ---
+        U_gust = self._gust_speed(t)
+        U_ambient = max(U_mean + U_gust, 0.0)  # speed cannot be negative
+
+        # ------------------------------------------------------------
+        # 2) Ambient direction: mean ("towards") + bounded slowly varying
+        #    offset (Part 2), no gust component on direction.
+        # ------------------------------------------------------------
+        if self.sigma_dir > 0.0 and self.tau_dir > 0.0:
+            w_beta = self._rng.normal(0.0, 1.0)
+            sigma_dir_sde = self.sigma_dir / np.sqrt(self.tau_dir / 2.0)
+            self._dbeta += (
+                -self._dbeta / self.tau_dir * dt
+                + sigma_dir_sde * np.sqrt(dt) * w_beta
+            )
+            self._dbeta = np.clip(self._dbeta, -self.dir_limit, self.dir_limit)
+
+        beta_towards = self._beta_towards_mean + self._dbeta
+        unit_towards = np.array([np.cos(beta_towards), np.sin(beta_towards)])
+
+        # ------------------------------------------------------------
+        # 3) Ambient wind as a NED vector [V_N, V_E] (Part 1).
+        # ------------------------------------------------------------
+        V_wind_ned = U_ambient * unit_towards
+
+        # ------------------------------------------------------------
+        # 4) Relative wind in the BODY frame (Part 1): rotate the NED
+        #    wind vector into BODY with J^T(psi), then subtract the
+        #    vessel's own BODY-frame velocity (u, v).
+        # ------------------------------------------------------------
+        psi = eta[5]
+        cpsi, spsi = np.cos(psi), np.sin(psi)
+        J_T = np.array([[cpsi, spsi],
+                         [-spsi, cpsi]])
+        V_wind_body = J_T @ V_wind_ned
+        V_rw_body = V_wind_body - nu[0:2]
+
+        U_rw = float(np.linalg.norm(V_rw_body))
+        alpha_rw = float(np.arctan2(V_rw_body[1], V_rw_body[0]))  # rad, (-pi, pi)
+
+        # ------------------------------------------------------------
+        # 5) Interpolate the coefficient table at alpha_rw (periodic,
+        #    360 deg) and compute the six generalized loads (Part 1).
+        # ------------------------------------------------------------
+        alpha_rw_deg = np.degrees(alpha_rw)
+        C = np.array([
+            np.interp(alpha_rw_deg, self._alpha_deg, self._C6[:, i], period=360.0)
+            for i in range(6)
+        ])
+        tau_w6 = (U_rw ** 2) * C
+
+        info = {
+            "U": U_ambient,
+            "beta_ned": float(np.mod(beta_towards, 2 * np.pi)),
+            "alpha_body": alpha_rw,
+            "U_mean": U_mean,
+            "U_gust": U_gust,
+        }
         return tau_w6, info
