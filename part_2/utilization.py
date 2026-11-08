@@ -1,53 +1,35 @@
-"""Thrust utilisation for Project Part 2, Simulation 5 — student work.
-
-Definitions (from the project text, Part 2, Simulation 5):
-
-* **Thrust utilisation** at time t is the sum of the magnitudes of the
-  individual thruster forces, as a percentage of the sum of the maximum
-  nominal thrusts of all active thrusters,
-
-      U_T(t) = 100 * sum_i |u_i(t)| / sum_i u_max,i .
-
-* **Average thrust utilisation** is the time average of U_T(t) over the
-  evaluation window — by default the second half of the run, so the
-  transient is excluded.
-
-``simulation/capability.py`` (provided) runs the directional sweep, computes
-the deviation measures and draws the polar plots; it calls the two functions
-below for every direction.  Part 2, Simulation 5 raises
-``NotImplementedError`` until you implement them.  The public check
-(``python check.py --part 2``) verifies them on a synthetic log.
-
-Inputs: ``logs`` carries ``logs.t`` (n,) time [s] and ``logs.u``
-(n, n_thrusters) ACTUAL thrusts [N] (one signed column per thruster);
-``thrusters`` is the list of ``ThrusterConfig`` with ``u_max`` [N].
-"""
-from __future__ import annotations
+"""Thrust utilisation for Project Part 2, Simulation 5."""
 
 import numpy as np
 
 
 def thrust_utilization(logs, thrusters) -> np.ndarray:
-    """Instantaneous thrust utilisation U_T(t) in percent, from ACTUAL thrusts.
+    """Calculate thrust utilisation [%] at each time step."""
+    u = np.asarray(logs.u, dtype=float)  # Actual thrust [N]
+    u_max = np.array([thruster.u_max for thruster in thrusters], dtype=float)
 
-    TODO (students): implement the definition above — the sum of the
-    magnitudes of the individual actuator forces (``logs.u``, one column per
-    thruster) as a percentage of the sum of the maximum nominal thrusts of
-    all active thrusters (``ThrusterConfig.u_max``).  Return one value per
-    time sample, shape ``(len(logs.t),)``.
-    """
-    raise NotImplementedError(
-        "implement thrust_utilization() in part_2/utilization.py — the "
-        "definition is in the project text (Part 2, Simulation 5)")
+    if u.shape != (len(logs.t), len(u_max)):
+        raise ValueError("logs.u must contain one column per thruster and one row per time step.")
+    if len(u_max) == 0 or np.any(u_max <= 0):
+        raise ValueError("Maximum thrusts must be positive.")
+    if not np.isfinite(u).all() or not np.isfinite(u_max).all():
+        raise ValueError("Thrust values must be finite.")
+
+    return 100.0 * np.sum(np.abs(u), axis=1) / np.sum(u_max)
 
 
 def average_utilization(logs, thrusters, t_from: float | None = None) -> float:
-    """Average thrust utilisation [%] over ``t >= t_from`` (default: the second
-    half of the run, so the transient is excluded).
+    """Calculate average utilisation [%] from t_from (default: second half)."""
+    t = np.asarray(logs.t, dtype=float)
+    if t.size == 0:
+        raise ValueError("The simulation log is empty.")
 
-    TODO (students): implement — the time average of
-    :func:`thrust_utilization` over the evaluation window.
-    """
-    raise NotImplementedError(
-        "implement average_utilization() in part_2/utilization.py — the "
-        "definition is in the project text (Part 2, Simulation 5)")
+    if t_from is None:
+        t_from = (t[0] + t[-1]) / 2
+
+    selected = t >= t_from
+    if not np.any(selected):
+        raise ValueError("No samples in the selected time interval.")
+
+    U_T = thrust_utilization(logs, thrusters)
+    return float(np.mean(U_T[selected]))
