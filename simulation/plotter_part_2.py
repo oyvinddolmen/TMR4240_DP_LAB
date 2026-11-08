@@ -1,4 +1,6 @@
 """Plots specific to Part 2: observer, wind field, waves, thruster set-points."""
+from pathlib import Path
+
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -85,6 +87,183 @@ def plot_observer_error(logs, figsize=(11, 7), window=30.0):
     fig.suptitle(f"Observer estimation errors: {logs.observer_name}")
     fig.tight_layout()
     return fig
+
+
+def _observer_comparison_axes(nrows, title, figsize, *, sharex="col"):
+    """Keep NPO left, Kalman right, with common scales for each quantity."""
+    fig, axes = plt.subplots(nrows, 2, figsize=figsize, sharex=sharex,
+                             sharey="row", squeeze=False, layout="constrained")
+    fig.suptitle(title, fontsize=13)
+    axes[0, 0].set_title("Nonlinear passive observer (NPO)")
+    axes[0, 1].set_title("Kalman filter (EKF)")
+    for ax in axes.flat:
+        ax.grid(True, alpha=0.3)
+        ax.tick_params(labelsize=9)
+    return fig, axes
+
+
+def plot_observer_pose_comparison(npo, kalman, figsize=(12, 8)):
+    """Fixed-wrench pose comparison with waves: NPO left, Kalman right."""
+    fig, axes = _observer_comparison_axes(
+        3, "Simulation 4: position and heading with waves", figsize)
+    rows = ((0, "North [m]", 1.0), (1, "East [m]", 1.0),
+            (5, "Heading [deg]", 180.0 / np.pi))
+    for col, logs in enumerate((npo, kalman)):
+        for row, (idx, label, scale) in enumerate(rows):
+            ax = axes[row, col]
+            for values, style in (
+                (logs.eta, dict(color="tab:blue", label="true", lw=1.3)),
+                (logs.eta_measured, dict(color="tab:orange", label="measured",
+                                         linestyle="none", marker=".", ms=1.8,
+                                         alpha=0.7)),
+                (logs.eta_est, dict(color="tab:green", label="estimated",
+                                    linestyle="--", lw=1.4)),
+            ):
+                values = np.unwrap(values[:, idx]) if idx == 5 else values[:, idx]
+                ax.plot(logs.t, scale * values, **style)
+            ax.set_ylabel(label)
+        axes[0, col].legend(loc="best", fontsize=9)
+        axes[-1, col].set_xlabel("Time [s]")
+    return fig
+
+
+def plot_observer_velocity_comparison(npo, kalman, figsize=(12, 8)):
+    """Fixed-wrench BODY velocity comparison without waves.
+
+    The noisy true velocities are validation signals, never observer inputs.
+    """
+    fig, axes = _observer_comparison_axes(
+        3, "Simulation 4: estimated BODY velocities without waves", figsize)
+    rows = ((0, "u [m/s]", 1.0), (1, "v [m/s]", 1.0),
+            (5, "r [deg/s]", 180.0 / np.pi))
+    for col, logs in enumerate((npo, kalman)):
+        for row, (idx, label, scale) in enumerate(rows):
+            ax = axes[row, col]
+            ax.plot(logs.t, scale * logs.nu[:, idx], color="tab:blue",
+                    lw=1.3, label="true")
+            ax.plot(logs.t, scale * logs.nu_measured[:, idx], ".",
+                    color="tab:orange", ms=1.8, alpha=0.7,
+                    label="true + noise (validation only)")
+            ax.plot(logs.t, scale * logs.nu_est[:, idx], "--",
+                    color="tab:green", lw=1.4, label="estimated")
+            ax.set_ylabel(label)
+        axes[0, col].legend(loc="best", fontsize=9)
+        axes[-1, col].set_xlabel("Time [s]")
+    return fig
+
+
+def plot_observer_convergence_comparison(npo, kalman, figsize=(12, 8), window=30.0):
+    """Offset-start pose errors, with a centred mean as an LF truth proxy.
+
+    Only complete averaging windows are shown for the LF proxy. Padding a
+    drifting trajectory would introduce artificial errors at both endpoints.
+    """
+    fig, axes = _observer_comparison_axes(
+        3, "Simulation 4: offset start and convergence", figsize)
+    rows = ((0, "North error [m]", 1.0), (1, "East error [m]", 1.0),
+            (5, "Heading error [deg]", 180.0 / np.pi))
+    for col, logs in enumerate((npo, kalman)):
+        dt = float(logs.t[1] - logs.t[0])
+        interior = ((logs.t >= logs.t[0] + window / 2)
+                    & (logs.t <= logs.t[-1] - window / 2))
+        for row, (idx, label, scale) in enumerate(rows):
+            ax = axes[row, col]
+            true = np.unwrap(logs.eta[:, idx]) if idx == 5 else logs.eta[:, idx]
+            est = np.unwrap(logs.eta_est[:, idx]) if idx == 5 else logs.eta_est[:, idx]
+            e_total = est - true
+            e_lf = est - _moving_average(true, dt, window)
+            if idx == 5:
+                e_total, e_lf = _wrap_pi(e_total), _wrap_pi(e_lf)
+            ax.plot(logs.t, scale * e_total, color="tab:blue", lw=0.7,
+                    alpha=0.6, label="estimate - truth")
+            ax.plot(logs.t[interior], scale * e_lf[interior], color="tab:orange",
+                    lw=1.3, label=f"estimate - LF truth ({window:.0f} s mean)")
+            ax.axhline(0.0, color="black", lw=0.6, alpha=0.65)
+            ax.set_ylabel(label)
+        axes[0, col].legend(loc="best", fontsize=8)
+        axes[-1, col].set_xlabel("Time [s]")
+    return fig
+
+
+def plot_observer_trajectory_comparison(npo, kalman, figsize=(12, 6)):
+    """Station-keeping trajectories with NPO left and Kalman right."""
+    fig, axes = _observer_comparison_axes(
+        1, "Simulation 4: station-keeping trajectory with waves", figsize,
+        sharex=False)
+    positions = np.vstack([logs.eta[:, :2] for logs in (npo, kalman)]
+                          + [logs.cmd[:, :2] for logs in (npo, kalman)])
+    lower, upper = positions.min(axis=0), positions.max(axis=0)
+    center = 0.5 * (lower + upper)
+    # A square view and equal spatial units keep both panels square, while
+    # common limits make the two observers' excursions directly comparable.
+    half_span = 0.58 * max(float(np.max(upper - lower)), 1.0)
+    for col, logs in enumerate((npo, kalman)):
+        ax = axes[0, col]
+        ax.plot(logs.eta[:, 1], logs.eta[:, 0], lw=1.0,
+                color="tab:blue", label="true trajectory")
+        ax.plot(logs.eta[0, 1], logs.eta[0, 0], "o", ms=5,
+                color="tab:green", label="start")
+        ax.plot(logs.eta[-1, 1], logs.eta[-1, 0], "s", ms=4,
+                color="tab:red", label="end")
+        commands = np.unique(logs.cmd[:, :2], axis=0)
+        ax.plot(commands[:, 1], commands[:, 0], "x", ms=8,
+                color="black", label="setpoint")
+        ax.set_xlim(center[1] - half_span, center[1] + half_span)
+        ax.set_ylim(center[0] - half_span, center[0] + half_span)
+        ax.set_aspect("equal", adjustable="box")
+        ax.set_xlabel("East [m]")
+        ax.set_ylabel("North [m]")
+        ax.legend(loc="best", fontsize=8)
+    return fig
+
+
+def plot_observer_wrench_comparison(npo, kalman, figsize=(12, 4.5)):
+    """Desired BODY wrench during station keeping, NPO left and Kalman right."""
+    fig, axes = _observer_comparison_axes(
+        1, "Simulation 4: controller wrench with waves (BODY)", figsize,
+        sharex=False)
+    for col, logs in enumerate((npo, kalman)):
+        ax = axes[0, col]
+        for idx, label, color in ((0, "Fx cmd [kN]", "tab:blue"),
+                                  (1, "Fy cmd [kN]", "tab:orange"),
+                                  (5, "Mz cmd [kNm]", "tab:green")):
+            ax.plot(logs.t, logs.tau_d[:, idx] * 1e-3, lw=1.0,
+                    color=color, label=label)
+        ax.set_xlabel("Time [s]")
+        ax.set_ylabel("Force [kN] / moment [kNm]")
+        ax.legend(loc="best", fontsize=8)
+    return fig
+
+
+def save_sim4_comparison_plots(results, output_dir):
+    """Create and overwrite the five report PDFs from one complete sim4 run.
+
+    Paths are supplied by the runner so notebook working directories do not
+    affect where the report figures are saved. Figures also remain open for
+    the normal interactive Matplotlib/notebook workflow.
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    comparisons = (
+        ("sim4_pose_with_waves.pdf", plot_observer_pose_comparison,
+         results[("nonlinear_passive", "with waves")], results[("kalman", "with waves")]),
+        ("sim4_velocity_without_waves.pdf", plot_observer_velocity_comparison,
+         results[("nonlinear_passive", "without waves")], results[("kalman", "without waves")]),
+        ("sim4_offset_convergence.pdf", plot_observer_convergence_comparison,
+         results[("nonlinear_passive", "offset start")], results[("kalman", "offset start")]),
+        ("sim4_trajectory.pdf", plot_observer_trajectory_comparison,
+         results[("closed loop", "nonlinear")], results[("closed loop", "kalman")]),
+        ("sim4_controller_wrench.pdf", plot_observer_wrench_comparison,
+         results[("closed loop", "nonlinear")], results[("closed loop", "kalman")]),
+    )
+    paths = []
+    with plt.rc_context({"pdf.fonttype": 42}):
+        for filename, plot, npo, kalman in comparisons:
+            fig = plot(npo, kalman)
+            path = output_dir / filename
+            fig.savefig(path, format="pdf", bbox_inches="tight")
+            paths.append(path)
+    return paths
 
 
 def plot_heading_decomposition(logs, figsize=(11, 4)):

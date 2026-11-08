@@ -329,7 +329,7 @@ class KalmanFilterObserver(Observer):
 
         # Bias model
         self.bias_tau = np.array([600.0, 600.0, 600.0])
-        self.bias_std = np.array([400, 400, 850])
+        self.bias_std = np.array([4000, 4000, 20E3])
 
         # Process and measurement noise
         self.accel_std = np.array([0.001, 0.001, np.deg2rad(0.0005)])

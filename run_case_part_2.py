@@ -18,13 +18,14 @@ your final tuning there, not only in this file.
 
 ``SELECTED_OBSERVER`` starts as ``None``: compare both observers in Part 2,
 Simulation 4, then set it to the one you chose and justify the choice in the
-report.  Part 2, Simulations 5-7 and the raw-vs-observer comparison of
-Part 2, Simulation 4 use it explicitly, and stop with a message until you
-have set it.
+report. Part 2, Simulations 5-7 use it explicitly and stop with a message
+until you have set it. Simulation 4 always compares both observers and
+exports five paired report figures to output/pdf/sim4/.
 """
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -36,7 +37,8 @@ from part_2.observer import select_observer
 from simulation.plotter_part_2 import (plot_heading_decomposition,
                                        plot_observer, plot_observer_error,
                                        plot_thruster_setpoints, plot_waves,
-                                       plot_wind_field, plot_wrench_residual)
+                                       plot_wind_field, plot_wrench_residual,
+                                       save_sim4_comparison_plots)
 from part_2.reference import ReferenceModel
 from part_2.thrust_allocation import ThrustAllocator
 from models.waves import Waves
@@ -66,8 +68,7 @@ CAP_POS_LIMIT, CAP_PSI_LIMIT_DEG = 5.0, 5.0               # DP watch circles (ma
 CAP_TOTAL_POS_LIMIT, CAP_TOTAL_PSI_LIMIT_DEG = 3.0, 3.0   # operability limits (max total motion)
 SEED = 123
 
-# TODO (students): the observer used by Part 2, Simulations 5-7 (and by the
-# raw-vs-observer comparison in Part 2, Simulation 4) is YOUR choice, made on
+# TODO (students): the observer used by Part 2, Simulations 5-7 is YOUR choice, made on
 # the evidence you produce in Part 2, Simulation 4.  Compare both observers
 # there first, then set this to "nonlinear_passive" or "kalman" and justify
 # the choice in the report.  It is None until you choose: every preset that
@@ -80,6 +81,9 @@ SELECTED_OBSERVER = "kalman"    # nonlinear_passive or kalman
 # The value below is an EXAMPLE (5 m north, 5 m west, 10 deg of heading):
 # choose your own, and say in the report what it is and why it is a fair test.
 OBSERVER_OFFSET = np.array([5.0, -5.0, 0.0, 0.0, 0.0, np.deg2rad(10.0)])
+
+# Absolute so rc.sim4() and the notebook always write to the same folder.
+SIM4_OUTPUT_DIR = Path(__file__).resolve().parent / "output" / "pdf" / "sim4"
 
 SCENARIO = "sim2"          # default scenario when run without arguments
 
@@ -236,7 +240,8 @@ def sim4():
     wrench [2 2 2]e3 in the Part 2, Simulation 1 environment, with and without waves,
     for both observers; (b) the same run started with OBSERVER_OFFSET so the estimate
     has something to converge from; (c) closed-loop station keeping with raw
-    measurements vs. SELECTED_OBSERVER."""
+    measurements and each observer. Five paired report PDFs are saved to
+    SIM4_OUTPUT_DIR on every call, with NPO left and Kalman right."""
     out = {}
     fixed = WrenchSequence([(1.0, [2e3, 2e3, 2e3])])
     variants = (("with waves", dict(waves=True)), ("without waves", dict(waves=False)))
@@ -247,9 +252,7 @@ def sim4():
             logs = run(cfg, np.zeros(6), environment(**env_kw), controller=fixed)
             plot_observer(logs).suptitle(f"Observer {kind}, {label}")
             plot_observer_error(logs).suptitle(f"Observer {kind}, {label} — estimation errors")
-
-            if kind == "kalman":
-                plot_heading_decomposition(logs)
+            plot_heading_decomposition(logs)
             out[(kind, label)] = logs
     # Convergence: start the estimate away from the truth (the engine resets it
     # ON the truth), then watch the error decay.  Quote the convergence time.
@@ -265,26 +268,20 @@ def sim4():
         plot_observer_error(logs).suptitle(
             f"Observer {kind}, offset start — estimation errors")
         out[(kind, "offset start")] = logs
-    # Stage (c) is the only part that needs the choice you make from the
-    # evidence above, so it is skipped until you have made it.  Stages (a) and
-    # (b) are returned either way: they are the measurements you select on.
-    if SELECTED_OBSERVER is None:
-        print("\nPart 2, Simulation 4: stages (a) and (b) are done and plotted, and "
-              "their logs are returned.\nCompare the observers on that evidence, set "
-              "SELECTED_OBSERVER at the top of run_case_part_2.py,\nthen run sim4 again "
-              "for stage (c), the raw-vs-observer closed loop."
-              "\n(In a notebook, restart the kernel or importlib.reload(rc) first, so the "
-              "new value is picked up.)")
-        return out
-    # Closed loop: does the selected observer improve the DP system?
-    for label, use_obs in (("raw measurements", False), (f"observer {selected_observer()}", True)):
+    # Run both actual observers, independently of the selection for sim5-7.
+    # Keep the existing output keys used by notebooks ("nonlinear", "kalman").
+    for label, use_obs, kind in (("raw measurements", False, "kalman"),
+                                 ("nonlinear", True, "nonlinear_passive"),
+                                 ("kalman", True, "kalman")):
         cfg = Part2SimConfig(dt=DT, T=600.0, use_observer=use_obs,
-                             observer_type=selected_observer())
+                             observer_type=kind)
         logs = run(cfg, np.zeros(6), environment())
         standard_plots(logs, setpoints=True, observer=use_obs,
                        save_thrust_pdf=not use_obs)
         plt.gcf().suptitle(f"Closed loop — {label}")
         out[("closed loop", label)] = logs
+    paths = save_sim4_comparison_plots(out, SIM4_OUTPUT_DIR)
+    print(f"Simulation 4: saved {len(paths)} comparison PDFs to {SIM4_OUTPUT_DIR}")
     return out
 
 
