@@ -102,10 +102,11 @@ def _observer_comparison_axes(nrows, title, figsize, *, sharex="col"):
     return fig, axes
 
 
-def plot_observer_pose_comparison(npo, kalman, figsize=(12, 8)):
+def plot_observer_pose_comparison(npo, kalman, figsize=(12, 8), *,
+                                  title="Simulation 4: position and heading with waves"):
     """Fixed-wrench pose comparison with waves: NPO left, Kalman right."""
     fig, axes = _observer_comparison_axes(
-        3, "Simulation 4: position and heading with waves", figsize)
+        3, title, figsize)
     rows = ((0, "North [m]", 1.0), (1, "East [m]", 1.0),
             (5, "Heading [deg]", 180.0 / np.pi))
     for col, logs in enumerate((npo, kalman)):
@@ -185,10 +186,11 @@ def plot_observer_convergence_comparison(npo, kalman, figsize=(12, 8), window=30
     return fig
 
 
-def plot_observer_trajectory_comparison(npo, kalman, figsize=(12, 6)):
+def plot_observer_trajectory_comparison(npo, kalman, figsize=(12, 6), *,
+                                        title="Simulation 4: station-keeping trajectory with waves"):
     """Station-keeping trajectories with NPO left and Kalman right."""
     fig, axes = _observer_comparison_axes(
-        1, "Simulation 4: station-keeping trajectory with waves", figsize,
+        1, title, figsize,
         sharex=False)
     positions = np.vstack([logs.eta[:, :2] for logs in (npo, kalman)]
                           + [logs.cmd[:, :2] for logs in (npo, kalman)])
@@ -217,10 +219,11 @@ def plot_observer_trajectory_comparison(npo, kalman, figsize=(12, 6)):
     return fig
 
 
-def plot_observer_wrench_comparison(npo, kalman, figsize=(12, 4.5)):
+def plot_observer_wrench_comparison(npo, kalman, figsize=(12, 4.5), *,
+                                    title="Simulation 4: controller wrench with waves (BODY)"):
     """Desired BODY wrench during station keeping, NPO left and Kalman right."""
     fig, axes = _observer_comparison_axes(
-        1, "Simulation 4: controller wrench with waves (BODY)", figsize,
+        1, title, figsize,
         sharex=False)
     for col, logs in enumerate((npo, kalman)):
         ax = axes[0, col]
@@ -233,6 +236,64 @@ def plot_observer_wrench_comparison(npo, kalman, figsize=(12, 4.5)):
         ax.set_ylabel("Force [kN] / moment [kNm]")
         ax.legend(loc="best", fontsize=8)
     return fig
+
+
+def plot_station_keeping_error_comparison(npo, kalman, figsize=(12, 7), *,
+                                          title="Station keeping: position and heading errors"):
+    """True tracking errors relative to the reference, NPO left and EKF right.
+
+    Each column shows North/East position errors above wrapped heading error,
+    using the same signals as the error panels in ``plot_dashboard``.
+    These are station-keeping errors, not observer estimation errors.
+    """
+    fig, axes = _observer_comparison_axes(2, title, figsize)
+    for col, logs in enumerate((npo, kalman)):
+        axes[0, col].plot(logs.t, logs.eta[:, 0] - logs.sp[:, 0],
+                          color="tab:blue", lw=1.0, label="N err [m]")
+        axes[0, col].plot(logs.t, logs.eta[:, 1] - logs.sp[:, 1],
+                          color="tab:orange", lw=1.0, label="E err [m]")
+        axes[0, col].set_ylabel("Position error [m]")
+        axes[0, col].legend(loc="best", fontsize=9)
+        heading_error = np.degrees(_wrap_pi(logs.eta[:, 5] - logs.sp[:, 5]))
+        axes[1, col].plot(logs.t, heading_error, color="tab:blue", lw=1.0)
+        axes[1, col].set_ylabel("Heading error [deg]")
+        axes[1, col].set_xlabel("Time [s]")
+        for ax in axes[:, col]:
+            ax.axhline(0.0, color="black", lw=0.6, alpha=0.5)
+    return fig
+
+
+def save_sensor_noise_comparison_plots(results, output_dir):
+    """Save only the four sensor-noise report figures, NPO left and EKF right.
+
+    Pose estimates use the identical fixed-wrench experiment for each observer.
+    Trajectory, controller wrench and tracking errors use each observer's own
+    closed-loop station-keeping run, with waves and sensor noise enabled.
+    Figures remain open for the notebook and interactive runner.
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    npo = results[("closed loop", "observer nonlinear_passive")]
+    kalman = results[("closed loop", "observer kalman")]
+    comparisons = (
+        ("sensor_noise_trajectory.pdf", plot_observer_trajectory_comparison,
+         npo, kalman, "Sensor noise: station-keeping trajectory with waves"),
+        ("sensor_noise_controller_wrench.pdf", plot_observer_wrench_comparison,
+         npo, kalman, "Sensor noise: station-keeping controller wrench (BODY)"),
+        ("sensor_noise_pose_with_waves.pdf", plot_observer_pose_comparison,
+         results["nonlinear_passive"], results["kalman"],
+         "Sensor noise: position and heading estimates with waves"),
+        ("sensor_noise_station_keeping_errors.pdf", plot_station_keeping_error_comparison,
+         npo, kalman, "Sensor noise: station-keeping position and heading errors"),
+    )
+    paths = []
+    with plt.rc_context({"pdf.fonttype": 42}):
+        for filename, plot, left, right, title in comparisons:
+            fig = plot(left, right, title=title)
+            path = output_dir / filename
+            fig.savefig(path, format="pdf", bbox_inches="tight")
+            paths.append(path)
+    return paths
 
 
 def save_sim4_comparison_plots(results, output_dir):

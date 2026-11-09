@@ -1,51 +1,35 @@
 """
-Thrust Allocation template
+The DP controller requests a BODY-frame wrench tau = [Fx, Fy, Mz]. Directly
+using azimuth thrust magnitude u and angle alpha as decision variables makes
+the wrench equality nonlinear. Instead, the azimuth thrusters are represented
+by Cartesian force components:
 
-Students should implement an algorithm that maps the desired body-frame
-wrench to individual thruster commands. The simulator calls, once per step:
+    z = [u_T, Fx1, Fy1, Fx2, Fy2]
 
-    allocator.allocate(t, dt, tau_d, u_now, alpha_now) -> (u_cmd, alpha_cmd)
+which gives the linear relation
 
-Inputs (full actuator state — use what your algorithm needs):
-    t         : current simulation time [s]
-    dt        : time step [s]              (rate-aware/dynamic allocation)
-    tau_d     : (6,) desired BODY wrench [Fx, Fy, Fz, Mx, My, Mz]
-                (the 3-DOF wrench to allocate is tau_d[[0, 1, 5]]
-                 = [Fx, Fy, Mz]; the other components are zero)
-    u_now     : current actual thrusts [N]     (rate-aware allocation)
-    alpha_now : current thruster angles [rad]  (minimize azimuth slewing)
+    Be @ z = tau.
 
-Outputs:
-    u_cmd     : signed thrust command for each thruster [N]
-    alpha_cmd : thruster angle command for each thruster [rad]
+The azimuth magnitude limit then becomes a circular constraint in the
+(Fx, Fy) plane. This constraint is nonlinear but convex, which keeps the
+saturation problem much easier to solve than the direct (u, alpha) form.
 
-Students may implement, for example:
-    - pseudo-inverse allocation,
-    - weighted least-squares allocation,
-    - optimization-based allocation,
-    - power-minimizing allocation.
+Normal operation uses the minimum-norm solution. If that solution violates
+static thrust limits, a constrained optimisation redistributes the available
+thrust. Uniform de-rating is kept as a robust fallback if the optimiser does
+not return a valid solution.
 
-Contract with the checks, exactly as the public checks test it: ``allocate()``
-must never command more thrust than a thruster can deliver, so for an
-infeasible demand (the check uses 400 kN of sway) every |u_cmd| <= u_max.
-*How* you handle an infeasible demand beyond that limit is your design
-decision, not a checked criterion — state your rule and justify it in the
-report.  The check also calls ``allocate()`` repeatedly from the initial
-actuator state, applies each command through IDEAL actuators and feeds the
-resulting actuator state back as ``u_now``/``alpha_now``; after 30 s of such
-calls the achieved wrench must equal the requested one.  A steady-state
-allocator therefore passes on its first call; a rate-aware allocator
-(optional extension, and optional in the project text too) passes once it has
-converged.  In the simulation the transient (thrust ramps, 2 rpm azimuth
-slews) is shaped by the actuator model in ``models/thruster_dynamics.py``
-whatever you command, so rate limiting your own commands is optional, not
-required.  ``u_now``/``alpha_now`` are passed in because a thruster produces
-the same force as (u, alpha) or as (-u, alpha + pi): which of the two you
-command, and on what basis, is part of your allocation design.
+Part 2 retains the Part 1 static allocation, then computes one-step-feasible
+thruster commands using the current thrust, azimuth and rate limits. The four
+equivalent azimuth sign combinations are compared using the predicted applied
+BODY wrench. The supplied actuator model still enforces the physical limits.
 """
+
 from typing import List, Optional, Tuple
+
 import numpy as np
 from scipy.optimize import minimize
+
 from models.thruster_dynamics import ThrusterConfig
 from simulation.utils import wrap_angle_pi
 
@@ -68,7 +52,7 @@ class ThrustAllocator:
             or thrusters[2].kind != "azimuth"
         ):
             raise ValueError(
-                "Inputed thruster config does not match what is expected"
+                "Thruster configuration does not match the expected layout"
             )
 
         self.tunnel = thrusters[0]
@@ -81,11 +65,24 @@ class ThrustAllocator:
 
         # Rank(Be)=3 is required to independently produce surge, sway and yaw
         if np.linalg.matrix_rank(self.Be) != 3:
-            raise ValueError("Extended thrust configuration matrix Be must have rank 3, but currently does not")
+            raise ValueError("Extended thrust configuration matrix Be must have rank 3")
+        self._Be_pinv = np.linalg.solve(self.Be @ self.Be.T, self.Be).T
 
         # The simulator stores thrust limits in N, while this allocator works in
         # kN/kNm internally to give SLSQP better numerical scaling
         self.u_max_kn = np.array([th.u_max for th in thrusters], dtype=float) / 1000.0
+
+        # Part 2 uses these limits to compute commands that are reachable
+        # within the next simulation step.
+        self.u_rate = np.array([th.u_rate for th in thrusters], dtype=float)
+        self.rot_speed = np.array([th.rot_speed for th in thrusters], dtype=float)
+
+        if np.any(~np.isfinite(self.u_max_kn)) or np.any(self.u_max_kn <= 0.0):
+            raise ValueError("Thruster maximum thrust must be finite and positive")
+        if np.any(~np.isfinite(self.u_rate)) or np.any(self.u_rate <= 0.0):
+            raise ValueError("Thruster thrust rates must be finite and positive")
+        if np.any(~np.isfinite(self.rot_speed[1:])) or np.any(self.rot_speed[1:] <= 0.0):
+            raise ValueError("Azimuth rotation rates must be finite and positive")
 
     # ------------------------------------------------------------------
     # Extended configuration matrix
@@ -131,7 +128,7 @@ class ThrustAllocator:
 
         # z = Be.T @ (Be @ Be.T)^(-1) @ tau.
         # solve() avoids explicitly forming the matrix inverse.
-        return self.Be.T @ np.linalg.solve(self.Be @ self.Be.T, tau)
+        return self._Be_pinv @ tau
 
     # ------------------------------------------------------------------
     # Static thrust limits
@@ -242,7 +239,7 @@ class ThrustAllocator:
             method="SLSQP",
             bounds=bounds,
             constraints=constraints,
-            options={"ftol": 1e-9, "maxiter": 100, "disp": False},
+            options={"ftol": 1e-9, "maxiter": 150, "disp": False},
         )
 
         z = np.asarray(result.x[:5], dtype=float)
@@ -257,9 +254,13 @@ class ThrustAllocator:
             and self._is_feasible(z, tol=1e-3)
             and -1e-6 <= lam <= 1.0 + 1e-6
             and residual <= 1e-3
+            and lam >= lambda0 - 1e-7
         )
 
-        return z if valid else None
+        if not valid:
+            return None
+
+        return z
 
     # ------------------------------------------------------------------
     # Converts Cartesian azimuth forces back to force magnitude and angle
@@ -297,7 +298,7 @@ class ThrustAllocator:
             current_angle = None if alpha_now is None else float(alpha_now[idx])
 
             # At zero thrust the angle has no force effect. Keep the current
-            # angle, if known, to avoid an unnecessary azimuth command, and power usage
+            # angle, if known, to avoid an unnecessary azimuth command
             if u < 1e-10:
                 alpha = 0.0 if current_angle is None else current_angle
             else:
@@ -322,37 +323,157 @@ class ThrustAllocator:
         return u_cmd, alpha_cmd
 
     # ------------------------------------------------------------------
+    # Part 2: one-step-feasible thrust and azimuth commands
+    # ------------------------------------------------------------------
+
+    def _one_step_allocation(
+        self,
+        u_target: np.ndarray,
+        alpha_target: np.ndarray,
+        u_now: np.ndarray,
+        alpha_now: np.ndarray,
+        dt: float,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Choose rate-feasible commands for the next actuator time step.
+
+        First, clip each target thrust and angle to the changes permitted in
+        one step. For each azimuth, (u, alpha) and (-u, alpha + pi) are
+        equivalent at steady state, but produce different transient forces.
+        Evaluate all four combinations, preferring shorter transitions to
+        the static target and then smaller predicted one-step wrench error.
+        """
+
+        # Targets already obey the static maximum-thrust constraints.
+        # Match the slew-rate rules used by ThrusterSet.step().
+        du_max = self.u_rate * dt
+        da_max = self.rot_speed * dt
+        u_limit = self.u_max_kn * 1000.0
+
+        # The tunnel angle is fixed. Its thrust is the same in every option.
+        best_u = None
+        best_alpha = None
+        best_cost = np.inf
+        best_steps = np.inf
+
+        # The nominal static allocation is the target for the predicted wrench.
+        # Convert yaw moment to a force equivalent with a characteristic arm.
+        c = np.cos(alpha_target)
+        s = np.sin(alpha_target)
+        tau_target = np.array([
+            np.dot(u_target, c),
+            np.dot(u_target, s),
+            sum(u_target[i] * (self.thrusters[i].x * s[i] - self.thrusters[i].y * c[i]) for i in range(3)),
+        ])
+        moment_arm = max(1.0, max(np.hypot(th.x, th.y) for th in self.thrusters))
+
+        for flip1 in (False, True):
+            for flip2 in (False, True):
+                desired_u = np.array(u_target, copy=True)
+                desired_a = np.array(alpha_target, copy=True)
+
+                for idx, flipped in ((1, flip1), (2, flip2)):
+                    if flipped:
+                        desired_u[idx] = -desired_u[idx]
+                        desired_a[idx] = wrap_angle_pi(desired_a[idx] + np.pi)
+
+                # Estimate how many steps are needed to reach the steady-state
+                # representation. Prefer the shortest overall transition.
+                steps = 0
+                for idx in (1, 2):
+                    thrust_steps = int(np.ceil(abs(desired_u[idx] - u_now[idx]) / du_max[idx] - 1e-12))
+                    angle_steps = int(np.ceil(abs(wrap_angle_pi(desired_a[idx] - alpha_now[idx])) / da_max[idx] - 1e-12))
+                    steps += max(thrust_steps, angle_steps)
+
+                # Commands are one-step reachable from the present actuator state.
+                u_step = np.clip(desired_u, u_now - du_max, u_now + du_max)
+                u_step = np.clip(u_step, -u_limit, u_limit)
+                a_step = np.array(desired_a, copy=True)
+                for idx in (1, 2):
+                    da = wrap_angle_pi(desired_a[idx] - alpha_now[idx])
+                    a_step[idx] = wrap_angle_pi(alpha_now[idx] + np.clip(da, -da_max[idx], da_max[idx]))
+
+                # Predict actual wrench at the end of the next step.
+                ca, sa = np.cos(a_step), np.sin(a_step)
+                tau_step = np.array([
+                    np.dot(u_step, ca),
+                    np.dot(u_step, sa),
+                    sum(u_step[i] * (self.thrusters[i].x * sa[i] - self.thrusters[i].y * ca[i]) for i in range(3)),
+                ])
+                residual = (tau_target - tau_step) / np.array([1.0, 1.0, moment_arm])
+                cost = float(np.dot(residual, residual))
+
+                # Use one-step wrench error to break ties in transition time.
+                # This avoids a short-sighted choice that looks good after one
+                # step but takes much longer to reach the final allocation.
+                if (steps < best_steps or
+                    (steps == best_steps and
+                     (best_u is None or cost < best_cost - max(1e-6, best_cost * 1e-8)))):
+                    best_steps = steps
+                    best_cost = cost
+                    best_u = u_step
+                    best_alpha = a_step
+
+        return best_u, best_alpha
+
+    # ------------------------------------------------------------------
     # "Main" function that runs per time-step
     # ------------------------------------------------------------------
 
     def allocate(
         self,
         t: float,                                           # Not used
-        dt: float,                                          # Not used
-        tau_d: np.ndarray,                                  # Desired thrust wrench
-        u_now: Optional[np.ndarray] = None,                 # Not used
-        alpha_now: Optional[np.ndarray] = None,             # Current angle on a thruster
+        dt: float,                                          # Simulation time step [s]
+        tau_d: np.ndarray,                                  # Desired BODY wrench [N, Nm]
+        u_now: Optional[np.ndarray] = None,                 # Current thrust [N]
+        alpha_now: Optional[np.ndarray] = None,             # Current azimuth angles [rad]
     ) -> Tuple[np.ndarray, np.ndarray]:
         """Calculates thruster force-magnitude and direction based on the desired 3-DOF controller wrench"""
 
-        # Part 1 allocates surge, sway and yaw only. Use kN/kNm internally so
-        # the constrained optimisation is numerically well scaled.
-        tau = np.asarray(tau_d[[0, 1, 5]], dtype=float) / 1000.0
+        # Allocate surge, sway and yaw only. Use kN/kNm internally so the
+        # constrained optimisation is numerically well scaled.
+        tau_d = np.asarray(tau_d, dtype=float).reshape(6)
+        if not np.all(np.isfinite(tau_d)):
+            raise ValueError("Desired wrench contains a non-finite value")
+
+        if u_now is not None:
+            u_now = np.asarray(u_now, dtype=float).reshape(3)
+            if not np.all(np.isfinite(u_now)):
+                raise ValueError("Current thrust contains a non-finite value")
+        if alpha_now is not None:
+            alpha_now = np.asarray(alpha_now, dtype=float).reshape(3)
+            if not np.all(np.isfinite(alpha_now)):
+                raise ValueError("Current angles contain a non-finite value")
+
+        tau = tau_d[[0, 1, 5]] / 1000.0
 
         # Use the minimum-norm solution during normal operation.
         z = self._minimum_norm_allocation(tau)
 
-        # Checks if requested thrust wrench is feasable
-        # If static limits are exceeded, the algorithms tries to redistribute the forces
-        # If the desired wrench cannot be obtained, the magnutude gets reduced before the command is passed forwards
+        # Check if the requested wrench is feasible. If a static limit is
+        # exceeded, redistribute thrust while preserving the wrench direction.
+        # If this is not possible, the achieved wrench magnitude is reduced.
         if not self._is_feasible(z):
             z_constrained = self._constrained_allocation(tau, z)
 
             if z_constrained is not None:
                 z = z_constrained
-            else:
-                # Fallback if SLSQP does not return a valid solution
-                z, _ = self._uniform_derating(z)
 
-        
-        return self._to_thruster_commands(z, alpha_now)
+        # Ensure that all static thrust limits are satisfied.
+        # Also serves as fallback if constrained allocation fails.
+        z, _ = self._uniform_derating(z)
+
+        u_cmd, alpha_cmd = self._to_thruster_commands(z, alpha_now)
+
+        if u_now is not None and alpha_now is not None:
+            if not np.isfinite(dt) or dt <= 0.0:
+                raise ValueError("Simulation time step must be finite and positive")
+            u_cmd, alpha_cmd = self._one_step_allocation(
+                u_cmd, alpha_cmd, u_now, alpha_now, dt
+            )
+
+        # Verify that commanded thrust remains within the static limits.
+        if np.any(np.abs(u_cmd) > self.u_max_kn * 1000.0 + 1e-6):
+            raise RuntimeError("Thrust allocation produced an invalid thrust command")
+
+        return u_cmd, alpha_cmd
