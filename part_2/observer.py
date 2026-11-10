@@ -69,7 +69,7 @@ class NonlinearPassiveObserver(Observer):
         zeta_desired=1.0,
         notch_factor=2.0,
         T_bias=(300.0, 300.0, 300.0),
-        k4=(8000.0, 8000.0, 1.5e6),
+        k4=(80000.0, 80000.0, 1.5e6),
         bias_gain_ratio=0.1,
     ):
 
