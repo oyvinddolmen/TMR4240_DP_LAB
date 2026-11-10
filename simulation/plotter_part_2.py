@@ -263,34 +263,120 @@ def plot_station_keeping_error_comparison(npo, kalman, figsize=(12, 7), *,
     return fig
 
 
-def save_sensor_noise_comparison_plots(results, output_dir):
-    """Save only the four sensor-noise report figures, NPO left and EKF right.
+def plot_observer_wrench_residual_comparison(npo, kalman, figsize=(12, 8), *,
+                                             title="Sensor noise: actuator wrench residual during station keeping"):
+    """Compare desired minus applied BODY wrench, NPO left and EKF right."""
+    fig, axes = _observer_comparison_axes(3, title, figsize)
+    rows = ((0, "Fx residual [kN]"), (1, "Fy residual [kN]"),
+            (5, "Mz residual [kNm]"))
+    for col, logs in enumerate((npo, kalman)):
+        residual = logs.tau_d - logs.tau_thr
+        for row, (idx, label) in enumerate(rows):
+            ax = axes[row, col]
+            ax.plot(logs.t, residual[:, idx] * 1e-3, color="tab:blue", lw=0.8)
+            ax.axhline(0.0, color="black", lw=0.6, alpha=0.5)
+            ax.set_ylabel(label)
+        axes[-1, col].set_xlabel("Time [s]")
+    return fig
+
+
+def plot_raw_feedback_ekf_comparison(raw, kalman, figsize=(12, 9)):
+    """Noisy station keeping: raw feedback left, EKF right.
+
+    Top row: true North-East trajectories with common spatial limits and
+    equal axis units. Bottom row: desired BODY controller wrench, also on a
+    common scale. The rows have separate horizontal axes (East and time).
+    """
+    fig, axes = plt.subplots(2, 2, figsize=figsize, sharey="row",
+                             layout="constrained")
+    fig.suptitle("Sensor noise: station keeping with raw feedback and EKF", fontsize=13)
+    positions = np.vstack([logs.eta[:, :2] for logs in (raw, kalman)]
+                          + [logs.cmd[:, :2] for logs in (raw, kalman)])
+    lower, upper = positions.min(axis=0), positions.max(axis=0)
+    center = 0.5 * (lower + upper)
+    half_span = 0.58 * max(float(np.max(upper - lower)), 1.0)
+    for col, (logs, title) in enumerate(((raw, "Raw feedback"),
+                                        (kalman, "Kalman filter (EKF)"))):
+        ax = axes[0, col]
+        ax.set_title(title)
+        ax.plot(logs.eta[:, 1], logs.eta[:, 0], color="tab:blue", lw=1.0,
+                label="true trajectory")
+        ax.plot(logs.eta[0, 1], logs.eta[0, 0], "o", color="tab:green", ms=5,
+                label="start")
+        ax.plot(logs.eta[-1, 1], logs.eta[-1, 0], "s", color="tab:red", ms=4,
+                label="end")
+        commands = np.unique(logs.cmd[:, :2], axis=0)
+        ax.plot(commands[:, 1], commands[:, 0], "x", color="black", ms=8,
+                label="setpoint")
+        ax.set_xlim(center[1] - half_span, center[1] + half_span)
+        ax.set_ylim(center[0] - half_span, center[0] + half_span)
+        ax.set_aspect("equal", adjustable="box")
+        ax.set_xlabel("East [m]")
+        ax.set_ylabel("North [m]")
+        ax.legend(loc="best", fontsize=8)
+
+        ax = axes[1, col]
+        ax.set_title("Controller wrench (BODY)")
+        for idx, label, color in ((0, "Fx cmd [kN]", "tab:blue"),
+                                  (1, "Fy cmd [kN]", "tab:orange"),
+                                  (5, "Mz cmd [kNm]", "tab:green")):
+            ax.plot(logs.t, logs.tau_d[:, idx] * 1e-3, color=color, lw=0.8,
+                    label=label)
+        ax.set_xlabel("Time [s]")
+        ax.set_ylabel("Force [kN] / moment [kNm]")
+        ax.legend(loc="best", fontsize=8)
+    axes[1, 1].sharex(axes[1, 0])
+    for ax in axes.flat:
+        ax.grid(True, alpha=0.3)
+        ax.tick_params(labelsize=9)
+    return fig
+
+
+def save_raw_feedback_ekf_comparison(raw, kalman, output_dir):
+    """Save one combined trajectory/controller-wrench PDF; keep it open."""
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path = output_dir / "sensor_noise_raw_feedback_vs_ekf.pdf"
+    with plt.rc_context({"pdf.fonttype": 42}):
+        fig = plot_raw_feedback_ekf_comparison(raw, kalman)
+        fig.savefig(path, format="pdf", bbox_inches="tight")
+    return path
+
+
+def save_sensor_noise_comparison_plots(results, output_dir, *, residual_output_dir=None):
+    """Save the five sensor-noise report figures, NPO left and EKF right.
 
     Pose estimates use the identical fixed-wrench experiment for each observer.
-    Trajectory, controller wrench and tracking errors use each observer's own
-    closed-loop station-keeping run, with waves and sensor noise enabled.
+    Trajectory, controller wrench, tracking errors and actuator residual use
+    each observer's own closed-loop run, with waves and sensor noise enabled.
+    The residual can be saved separately via ``residual_output_dir``.
     Figures remain open for the notebook and interactive runner.
     """
     output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    residual_output_dir = (output_dir if residual_output_dir is None
+                           else Path(residual_output_dir))
     npo = results[("closed loop", "observer nonlinear_passive")]
     kalman = results[("closed loop", "observer kalman")]
     comparisons = (
         ("sensor_noise_trajectory.pdf", plot_observer_trajectory_comparison,
-         npo, kalman, "Sensor noise: station-keeping trajectory with waves"),
+         npo, kalman, "Sensor noise: station-keeping trajectory with waves", output_dir),
         ("sensor_noise_controller_wrench.pdf", plot_observer_wrench_comparison,
-         npo, kalman, "Sensor noise: station-keeping controller wrench (BODY)"),
+         npo, kalman, "Sensor noise: station-keeping controller wrench (BODY)", output_dir),
         ("sensor_noise_pose_with_waves.pdf", plot_observer_pose_comparison,
          results["nonlinear_passive"], results["kalman"],
-         "Sensor noise: position and heading estimates with waves"),
+         "Sensor noise: position and heading estimates with waves", output_dir),
         ("sensor_noise_station_keeping_errors.pdf", plot_station_keeping_error_comparison,
-         npo, kalman, "Sensor noise: station-keeping position and heading errors"),
+         npo, kalman, "Sensor noise: station-keeping position and heading errors", output_dir),
+        ("sensor_noise_actuator_wrench_residual.pdf", plot_observer_wrench_residual_comparison,
+         npo, kalman, r"Sensor noise: actuator wrench residual $r_\tau=\tau_d-\tau_{thr}$",
+         residual_output_dir),
     )
     paths = []
     with plt.rc_context({"pdf.fonttype": 42}):
-        for filename, plot, left, right, title in comparisons:
+        for filename, plot, left, right, title, directory in comparisons:
             fig = plot(left, right, title=title)
-            path = output_dir / filename
+            directory.mkdir(parents=True, exist_ok=True)
+            path = directory / filename
             fig.savefig(path, format="pdf", bbox_inches="tight")
             paths.append(path)
     return paths

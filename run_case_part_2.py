@@ -21,7 +21,9 @@ Simulation 4, then set it to the one you chose and justify the choice in the
 report. Part 2, Simulations 5-7 use it explicitly and stop with a message
 until you have set it. Simulation 4 always compares both observers and
 exports five paired report figures to output/pdf/sim4/.
-The bonus sensor-noise scenario exports all its figures to output/pdf/sensor_noise/.
+The bonus sensor-noise scenario exports four paired figures to output/pdf/sensor_noise/
+and the actuator wrench residual comparison to outputs/sensor_noise/.
+A combined noisy raw-feedback versus EKF comparison is saved to output/pdf/.
 """
 from __future__ import annotations
 
@@ -39,6 +41,8 @@ from simulation.plotter_part_2 import (plot_heading_decomposition,
                                        plot_observer, plot_observer_error,
                                        plot_thruster_setpoints, plot_waves,
                                        plot_wind_field, plot_wrench_residual,
+                                       save_raw_feedback_ekf_comparison,
+                                       save_sensor_noise_comparison_plots,
                                        save_sim4_comparison_plots)
 from part_2.reference import ReferenceModel
 from part_2.thrust_allocation import ThrustAllocator
@@ -86,6 +90,8 @@ OBSERVER_OFFSET = np.array([5.0, -5.0, 0.0, 0.0, 0.0, np.deg2rad(10.0)])
 # Absolute so the runner and notebooks always write to the same folders.
 SIM4_OUTPUT_DIR = Path(__file__).resolve().parent / "output" / "pdf" / "sim4"
 SENSOR_NOISE_OUTPUT_DIR = Path(__file__).resolve().parent / "output" / "pdf" / "sensor_noise"
+SENSOR_NOISE_RESIDUAL_OUTPUT_DIR = Path(__file__).resolve().parent / "outputs" / "sensor_noise"
+SENSOR_NOISE_RAW_EKF_OUTPUT_DIR = Path(__file__).resolve().parent / "output" / "pdf"
 
 SCENARIO = "sim2"          # default scenario when run without arguments
 
@@ -341,39 +347,30 @@ def sim7():
 def bonus_sensor_noise():
     """Extra credit (3 points) — sensor noise: repeat the Part 2, Simulation 4
     observer comparison and the closed-loop raw-vs-observer run with
-    measurement noise ON (fixed course noise levels, models/sensors.py). """
+    measurement noise ON (fixed course noise levels, models/sensors.py)."""
     out = {}
-    figures = {}
     fixed = WrenchSequence([(1.0, [2e3, 2e3, 2e3])])
     for kind in ("nonlinear_passive", "kalman"):
         cfg = Part2SimConfig(dt=DT, T=600.0, use_reference=False, use_observer=True,
                              observer_type=kind, use_sensor_noise=True)
         logs = run(cfg, np.zeros(6), environment(), controller=fixed)
-        fig = plot_observer(logs)
-        fig.suptitle(f"Bonus: observer {kind}, waves + sensor noise")
-        figures[f"sensor_noise_{kind}_observer"] = fig
-        fig = plot_observer_error(logs)
-        fig.suptitle(f"Bonus: observer {kind}, waves + sensor noise — estimation errors")
-        figures[f"sensor_noise_{kind}_observer_errors"] = fig
+        plot_observer(logs).suptitle(f"Bonus: observer {kind}, waves + sensor noise")
+        plot_observer_error(logs).suptitle(f"Bonus: observer {kind}, waves + sensor noise — estimation errors")
         out[kind] = logs
-    for label, use_obs in (("raw noisy measurements", False),
-                           (f"observer {selected_observer()}", True)):
+    for label, use_obs, kind in (("raw noisy measurements", False, "kalman"),
+                                 ("observer kalman", True, "kalman"),
+                                 ("observer nonlinear_passive", True, "nonlinear_passive")):
         cfg = Part2SimConfig(dt=DT, T=600.0, use_observer=use_obs,
-                             observer_type=selected_observer(), use_sensor_noise=True)
+                             observer_type=kind, use_sensor_noise=True)
         logs = run(cfg, np.zeros(6), environment())
-        closed_loop_figures = standard_plots(logs, setpoints=True, observer=use_obs)
+        standard_plots(logs, setpoints=True, observer=use_obs)
         plt.gcf().suptitle(f"Bonus closed loop, sensor noise on — {label}")
-        feedback = selected_observer() if use_obs else "raw"
-        for name, fig in closed_loop_figures.items():
-            figures[f"sensor_noise_closed_loop_{feedback}_{name}"] = fig
         out[("closed loop", label)] = logs
-    SENSOR_NOISE_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    #with plt.rc_context({"pdf.fonttype": 42}):
-        #for name, fig in figures.items():
-            # fig.savefig(SENSOR_NOISE_OUTPUT_DIR / f"{name}.pdf",
-                        #format="pdf", bbox_inches="tight")
+    paths = save_sensor_noise_comparison_plots(
+        out, SENSOR_NOISE_OUTPUT_DIR,
+        residual_output_dir=SENSOR_NOISE_RESIDUAL_OUTPUT_DIR)
+    #print(f"Sensor noise: saved {len(paths)} comparison PDFs to {SENSOR_NOISE_OUTPUT_DIR}")
     return out
-
 
 SCENARIOS = {"sim1": sim1, "sim2": sim2, "sim3": sim3, "sim4": sim4,
              "sim5": sim5, "sim6": sim6, "sim7": sim7, "bonus": bonus_sensor_noise}

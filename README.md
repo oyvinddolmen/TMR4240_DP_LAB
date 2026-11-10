@@ -275,7 +275,15 @@ station-keeping trajectory, controller wrench, position/heading estimates with w
 and noise (fixed wrench), and station-keeping position/heading errors (true pose
 minus reference, with heading wrapped to +/-180 degrees). The last figure has
 position errors in the top row and heading errors in the bottom row.
+An additional actuator wrench residual comparison (`tau_d - tau_thr`) is saved to
+`outputs/sensor_noise/sensor_noise_actuator_wrench_residual.pdf`, with Fx, Fy and Mz
+in separate rows, NPO left and EKF right. Force is shown in kN and moment in kNm.
 The folder is created automatically, and rerunning replaces files with the same names.
+
+The noisy raw-versus-EKF station-keeping comparison is also exported as one PDF:
+`output/pdf/sensor_noise_raw_feedback_vs_ekf.pdf`. Raw feedback is in the left column,
+EKF in the right, with trajectories above controller wrench. Both closed-loop runs
+use `use_sensor_noise=True` and the same seeded environment and sensor noise levels.
 
 **The two choices the runner leaves to you**, both at the top of `run_case_part_2.py`:
 
