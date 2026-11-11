@@ -107,6 +107,23 @@ def plot_dropout_pose_comparison(logs, dropout, figsize=(12, 8)):
     return fig
 
 
+def plot_dropout_bias(logs, dropout, figsize=(12, 8)):
+    """Estimated NED environmental force and yaw-moment bias during dropout."""
+    fig, axes = plt.subplots(3, 1, figsize=figsize, sharex=True,
+                             layout="constrained")
+    for ax, idx, label in zip(axes, (0, 1, 5),
+                               ("North bias [kN]", "East bias [kN]", "Yaw bias [kNm]")):
+        ax.plot(logs.t, logs.bias_est[:, idx] * 1e-3, color="tab:blue", lw=1.0)
+        ax.set_ylabel(label)
+        ax.set_xlim(logs.t[0], logs.t[-1])
+    _mark_dropout(axes, dropout, label=None)
+    axes[-1].set_xlabel("Time [s]")
+    fig.suptitle("Simulation 7: estimated environmental bias (EKF)\n"
+                 f"All pose measurements unavailable: {dropout[0]:g}-{dropout[1]:g} s; "
+                 "measurement noise off", fontsize=13)
+    return fig
+
+
 def save_sim7_dropout_plots(logs, thrusters, output_dir, *, dropout):
     """Save the three report PDFs and keep figures open for interactive use."""
     output_dir = Path(output_dir)

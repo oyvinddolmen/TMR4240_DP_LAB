@@ -164,6 +164,10 @@ class DPSimulatorPart2:
             eta = to_6dof(self.vessel.get_eta())
             nu = to_6dof(self.vessel.get_nu())
             eta_m, nu_m = self.sensors.measure(eta, nu)
+            if (cfg.measurement_dropout is not None
+                    and cfg.measurement_dropout[0] <= tk < cfg.measurement_dropout[1]):
+                # Missing pose channels make the EKF perform prediction only.
+                eta_m[:] = np.nan
             eta_h[k], nu_h[k] = eta, nu
             eta_mh[k], nu_mh[k] = eta_m, nu_m
 
