@@ -48,7 +48,7 @@ from simulation.simulation_part_2 import DPSimulatorPart2
 from simulation.plotter_dropout import (
     plot_dropout_actuator_usage,
     plot_dropout_pose_comparison,
-    plot_dropout_actuator_usage,
+    plot_dropout_bias,
 )
 
 # Some presets deliberately open more figures than matplotlib's default
@@ -342,10 +342,7 @@ def sim7():
     logs = run(cfg, np.zeros(6), environment())
     plot_dropout_actuator_usage(logs, default_thrusters_part_2(), cfg.measurement_dropout)
     plot_dropout_pose_comparison(logs, cfg.measurement_dropout)
-    plot_dropout_actuator_usage(
-        logs=logs,
-        thrusters=default_thrusters_part_2(),
-        dropout=cfg.measurement_dropout,)
+    plot_dropout_bias(logs, cfg.measurement_dropout)
     plt.show()
     return logs
 
