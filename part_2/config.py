@@ -75,6 +75,7 @@ class Part2SimConfig:
     thruster_dynamics: bool = True
     bypass_actuators: bool = False
     observer_kwargs: Dict[str, Any] = field(default_factory=dict)
+    measurement_dropout: tuple[float, float] | None = None
 
 @dataclass
 class TuningParameters:

@@ -45,6 +45,11 @@ from simulation.capability import capability_sweep, plot_capability
 from simulation.plotter import (plot_current, plot_dashboard, plot_time_histories,
                                 plot_wrench, plot_xy)
 from simulation.simulation_part_2 import DPSimulatorPart2
+from simulation.plotter_dropout import (
+    plot_dropout_actuator_usage,
+    plot_dropout_pose_comparison,
+    plot_dropout_actuator_usage,
+)
 
 # Some presets deliberately open more figures than matplotlib's default
 # 20-figure warning threshold: Part 2, Simulation 4 alone plots both observers
@@ -327,11 +332,21 @@ def sim6():
 
 
 def sim7():
-    """Part 2, Simulation 7 — your own showcase.  Design it, explain it, discuss it."""
-    # TODO (students): replace this with your own scenario.
-    cfg = Part2SimConfig(dt=DT, T=600.0, use_observer=True, observer_type=selected_observer())
+    """Part 2, Simulation 7 — EKF station keeping for 400 s, with all pose
+    measurements lost for 200 <= t < 300 s. Standard current, wind and waves;
+    no measurement noise. Save trajectory, actuator usage and pose estimates
+    to output/pdf/sim7/."""
+    cfg = Part2SimConfig(dt=DT, T=400.0, use_observer=True,
+                         observer_type="kalman", use_sensor_noise=False,
+                         measurement_dropout=(200.0, 300.0))
     logs = run(cfg, np.zeros(6), environment())
-    standard_plots(logs, observer=True)
+    plot_dropout_actuator_usage(logs, default_thrusters_part_2(), cfg.measurement_dropout)
+    plot_dropout_pose_comparison(logs, cfg.measurement_dropout)
+    plot_dropout_actuator_usage(
+        logs=logs,
+        thrusters=default_thrusters_part_2(),
+        dropout=cfg.measurement_dropout,)
+    plt.show()
     return logs
 
 
