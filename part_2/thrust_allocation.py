@@ -1,28 +1,24 @@
 """
-The DP controller requests a BODY-frame wrench tau = [Fx, Fy, Mz]. Directly
-using azimuth thrust magnitude u and angle alpha as decision variables makes
-the wrench equality nonlinear. Instead, the azimuth thrusters are represented
-by Cartesian force components:
+Thrust allocation for the R/V Gunnerus DP system.
+
+The allocator converts the desired body-frame wrench into thrust and angle
+commands for one tunnel thruster and two azimuth thrusters.
+
+As in Part 1, the azimuth thrusters are represented by Cartesian force
+components instead of thrust magnitude and angle:
 
     z = [u_T, Fx1, Fy1, Fx2, Fy2]
 
-which gives the linear relation
+This gives the linear relation Be @ z = tau. The minimum-norm solution is used
+when the thrust limits are satisfied. Otherwise, constrained optimisation
+redistributes the thrust while preserving the requested wrench direction.
+Uniform scaling is used as a fallback if the optimisation fails.
 
-    Be @ z = tau.
-
-The azimuth magnitude limit then becomes a circular constraint in the
-(Fx, Fy) plane. This constraint is nonlinear but convex, which keeps the
-saturation problem much easier to solve than the direct (u, alpha) form.
-
-Normal operation uses the minimum-norm solution. If that solution violates
-static thrust limits, a constrained optimisation redistributes the available
-thrust. Uniform de-rating is kept as a robust fallback if the optimiser does
-not return a valid solution.
-
-Part 2 retains the Part 1 static allocation, then computes one-step-feasible
-thruster commands using the current thrust, azimuth and rate limits. The four
-equivalent azimuth sign combinations are compared using the predicted applied
-BODY wrench. The supplied actuator model still enforces the physical limits.
+In Part 2, the current thrust, azimuth angles and actuator rate limits are
+also used to calculate commands that can be reached within one time step.
+Four equivalent azimuth command combinations are compared using estimated
+transition steps, with predicted wrench error used to break ties. The supplied
+actuator model still enforces the physical limits.
 """
 
 from typing import List, Optional, Tuple
@@ -66,10 +62,11 @@ class ThrustAllocator:
         # Rank(Be)=3 is required to independently produce surge, sway and yaw
         if np.linalg.matrix_rank(self.Be) != 3:
             raise ValueError("Extended thrust configuration matrix Be must have rank 3")
+        # Be is constant, so its pseudo-inverse only needs to be calculated once
         self._Be_pinv = np.linalg.solve(self.Be @ self.Be.T, self.Be).T
 
-        # The simulator stores thrust limits in N, while this allocator works in
-        # kN/kNm internally to give SLSQP better numerical scaling
+        # Use kN/kNm for the static allocation to improve numerical scaling
+        # in SLSQP. The simulator uses N and Nm.
         self.u_max_kn = np.array([th.u_max for th in thrusters], dtype=float) / 1000.0
 
         # Part 2 uses these limits to compute commands that are reachable
@@ -128,6 +125,7 @@ class ThrustAllocator:
 
         # z = Be.T @ (Be @ Be.T)^(-1) @ tau.
         # solve() avoids explicitly forming the matrix inverse.
+        # The pseudo-inverse is calculated once during initialization.
         return self._Be_pinv @ tau
 
     # ------------------------------------------------------------------
@@ -245,8 +243,7 @@ class ThrustAllocator:
         z = np.asarray(result.x[:5], dtype=float)
         lam = float(result.x[5])
 
-        # Verify that the returned point
-        # is finite, respects the thrust limits and satisfies the equality
+        # Check that the solution is finite, feasible and no worse than the fallback
         residual = np.linalg.norm(self.Be @ z - lam * tau)
         valid = (
             np.all(np.isfinite(z))
@@ -335,13 +332,12 @@ class ThrustAllocator:
         dt: float,
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Choose rate-feasible commands for the next actuator time step.
+        Choose commands that can be reached within one simulation step.
 
-        First, clip each target thrust and angle to the changes permitted in
-        one step. For each azimuth, (u, alpha) and (-u, alpha + pi) are
-        equivalent at steady state, but produce different transient forces.
-        Evaluate all four combinations, preferring shorter transitions to
-        the static target and then smaller predicted one-step wrench error.
+        Each azimuth can produce the same force using (u, alpha) or
+        (-u, alpha + pi). The four combinations are compared using the
+        estimated number of steps needed to reach the static allocation.
+        Predicted one-step wrench error is used to break ties.
         """
 
         # Targets already obey the static maximum-thrust constraints.
@@ -356,8 +352,8 @@ class ThrustAllocator:
         best_cost = np.inf
         best_steps = np.inf
 
-        # The nominal static allocation is the target for the predicted wrench.
-        # Convert yaw moment to a force equivalent with a characteristic arm.
+        # Use the static allocation as the reference wrench.
+        # Scale yaw moment using a characteristic thruster arm.
         c = np.cos(alpha_target)
         s = np.sin(alpha_target)
         tau_target = np.array([
@@ -377,8 +373,7 @@ class ThrustAllocator:
                         desired_u[idx] = -desired_u[idx]
                         desired_a[idx] = wrap_angle_pi(desired_a[idx] + np.pi)
 
-                # Estimate how many steps are needed to reach the steady-state
-                # representation. Prefer the shortest overall transition.
+                # Count the steps needed by each azimuth to reach its target.
                 steps = 0
                 for idx in (1, 2):
                     thrust_steps = int(np.ceil(abs(desired_u[idx] - u_now[idx]) / du_max[idx] - 1e-12))
@@ -403,9 +398,8 @@ class ThrustAllocator:
                 residual = (tau_target - tau_step) / np.array([1.0, 1.0, moment_arm])
                 cost = float(np.dot(residual, residual))
 
-                # Use one-step wrench error to break ties in transition time.
-                # This avoids a short-sighted choice that looks good after one
-                # step but takes much longer to reach the final allocation.
+                # Prefer fewer transition steps. If tied, choose the smaller
+                # predicted wrench error after the next step.
                 if (steps < best_steps or
                     (steps == best_steps and
                      (best_u is None or cost < best_cost - max(1e-6, best_cost * 1e-8)))):
@@ -428,7 +422,7 @@ class ThrustAllocator:
         u_now: Optional[np.ndarray] = None,                 # Current thrust [N]
         alpha_now: Optional[np.ndarray] = None,             # Current azimuth angles [rad]
     ) -> Tuple[np.ndarray, np.ndarray]:
-        """Calculates thruster force-magnitude and direction based on the desired 3-DOF controller wrench"""
+        """Convert the desired body-frame wrench to thrust and angle commands."""
 
         # Allocate surge, sway and yaw only. Use kN/kNm internally so the
         # constrained optimisation is numerically well scaled.
