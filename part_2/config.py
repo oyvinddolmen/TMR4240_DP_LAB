@@ -49,6 +49,10 @@ class Part2SimConfig:
     setting you select per simulation.  The mandatory simulations run with
     ideal measurements (``False``, the default).
 
+    ``measurement_dropout=(start, stop)`` removes North, East and heading
+    measurements for ``start <= t < stop``. The EKF then runs its time update
+    without measurement correction. ``None`` leaves measurements available.
+
     ``use_controller=False`` switches the DP system off: the controller is
     not called, the desired wrench is zero and the vessel drifts freely under
     the environmental loads (Simulation 1).  ``use_observer`` still works in
@@ -75,6 +79,7 @@ class Part2SimConfig:
     thruster_dynamics: bool = True
     bypass_actuators: bool = False
     observer_kwargs: Dict[str, Any] = field(default_factory=dict)
+    measurement_dropout: tuple[float, float] | None = None
 
 @dataclass
 class TuningParameters:

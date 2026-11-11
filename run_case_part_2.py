@@ -18,9 +18,11 @@ your final tuning there, not only in this file.
 
 ``SELECTED_OBSERVER`` starts as ``None``: compare both observers in Part 2,
 Simulation 4, then set it to the one you chose and justify the choice in the
-report. Part 2, Simulations 5-7 use it explicitly and stop with a message
+report. Part 2, Simulations 5-6 use it explicitly and stop with a message
 until you have set it. Simulation 4 always compares both observers and
-exports five paired report figures to output/pdf/sim4/.
+exports six paired report figures to output/pdf/sim4/.
+Simulation 7 uses EKF explicitly and exports its measurement-dropout case
+to output/pdf/sim7/.
 The bonus sensor-noise scenario exports four paired figures to output/pdf/sensor_noise/
 and the actuator wrench residual comparison to outputs/sensor_noise/.
 A combined noisy raw-feedback versus EKF comparison is saved to output/pdf/.
@@ -44,6 +46,7 @@ from simulation.plotter_part_2 import (plot_heading_decomposition,
                                        save_raw_feedback_ekf_comparison,
                                        save_sensor_noise_comparison_plots,
                                        save_sim4_comparison_plots)
+from simulation.plotter_dropout import save_sim7_dropout_plots
 from part_2.reference import ReferenceModel
 from part_2.thrust_allocation import ThrustAllocator
 from models.waves import Waves
@@ -73,7 +76,7 @@ CAP_POS_LIMIT, CAP_PSI_LIMIT_DEG = 5.0, 5.0               # DP watch circles (ma
 CAP_TOTAL_POS_LIMIT, CAP_TOTAL_PSI_LIMIT_DEG = 3.0, 3.0   # operability limits (max total motion)
 SEED = 123
 
-# TODO (students): the observer used by Part 2, Simulations 5-7 is YOUR choice, made on
+# TODO (students): the observer used by Part 2, Simulations 5-6 is YOUR choice, made on
 # the evidence you produce in Part 2, Simulation 4.  Compare both observers
 # there first, then set this to "nonlinear_passive" or "kalman" and justify
 # the choice in the report.  It is None until you choose: every preset that
@@ -89,6 +92,7 @@ OBSERVER_OFFSET = np.array([5.0, -5.0, 0.0, 0.0, 0.0, np.deg2rad(10.0)])
 
 # Absolute so the runner and notebooks always write to the same folders.
 SIM4_OUTPUT_DIR = Path(__file__).resolve().parent / "output" / "pdf" / "sim4"
+SIM7_OUTPUT_DIR = Path(__file__).resolve().parent / "output" / "pdf" / "sim7"
 SENSOR_NOISE_OUTPUT_DIR = Path(__file__).resolve().parent / "output" / "pdf" / "sensor_noise"
 SENSOR_NOISE_RESIDUAL_OUTPUT_DIR = Path(__file__).resolve().parent / "outputs" / "sensor_noise"
 SENSOR_NOISE_RAW_EKF_OUTPUT_DIR = Path(__file__).resolve().parent / "output" / "pdf"
@@ -252,8 +256,8 @@ def sim4():
     wrench [2 2 2]e3 in the Part 2, Simulation 1 environment, with and without waves,
     for both observers; (b) the same run started with OBSERVER_OFFSET so the estimate
     has something to converge from; (c) closed-loop station keeping with raw
-    measurements and each observer. Five paired report PDFs are saved to
-    SIM4_OUTPUT_DIR on every call, with NPO left and Kalman right."""
+    measurements and each observer. Six paired report PDFs are saved to
+    SIM4_OUTPUT_DIR on every call, with NPO left and EKF right."""
     out = {}
     fixed = WrenchSequence([(1.0, [2e3, 2e3, 2e3])])
     variants = (("with waves", dict(waves=True)), ("without waves", dict(waves=False)))
@@ -280,7 +284,7 @@ def sim4():
         plot_observer_error(logs).suptitle(
             f"Observer {kind}, offset start — estimation errors")
         out[(kind, "offset start")] = logs
-    # Run both actual observers, independently of the selection for sim5-7.
+    # Run both actual observers, independently of the selection for sim5-6.
     # Keep the existing output keys used by notebooks ("nonlinear", "kalman").
     for label, use_obs, kind in (("raw measurements", False, "kalman"),
                                  ("nonlinear", True, "nonlinear_passive"),
@@ -336,11 +340,18 @@ def sim6():
 
 
 def sim7():
-    """Part 2, Simulation 7 — your own showcase.  Design it, explain it, discuss it."""
-    # TODO (students): replace this with your own scenario.
-    cfg = Part2SimConfig(dt=DT, T=600.0, use_observer=True, observer_type=selected_observer())
+    """Part 2, Simulation 7 — EKF station keeping for 400 s, with all pose
+    measurements lost for 200 <= t < 300 s. Standard current, wind and waves;
+    no measurement noise. Save trajectory, actuator usage and pose estimates
+    to output/pdf/sim7/."""
+    cfg = Part2SimConfig(dt=DT, T=400.0, use_observer=True,
+                         observer_type="kalman", use_sensor_noise=False,
+                         measurement_dropout=(200.0, 300.0))
     logs = run(cfg, np.zeros(6), environment())
-    standard_plots(logs, observer=True)
+    paths = save_sim7_dropout_plots(
+        logs, default_thrusters_part_2(), SIM7_OUTPUT_DIR,
+        dropout=cfg.measurement_dropout)
+    print(f"Simulation 7: saved {len(paths)} PDFs to {SIM7_OUTPUT_DIR}")
     return logs
 
 

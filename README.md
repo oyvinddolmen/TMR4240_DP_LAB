@@ -266,8 +266,19 @@ python run_case_part_2.py sim2      # Part 2, Simulation 2
 | `sim4` | Part 2, Simulation 4 | Observer comparison and selection, in three stages: a fixed wrench with and without waves for both observers; the same run started from `OBSERVER_OFFSET` so the estimate has an error to converge from; then closed-loop station keeping with raw measurements against your `SELECTED_OBSERVER` |
 | `sim5` | Part 2, Simulation 5 | Average thrust-utilisation polar plot over the environmental direction. `simulation/capability.py` runs the sweep and calls your `part_2/utilization.py` for the metric. Three polar plots: all directions; the DP watch-circle view, masking a direction whose maximum **low-frequency** excursion (30 s moving average, second half of the run) exceeds 5 m / 5°; and the operability view, masking a direction whose maximum **total** motion, wave-frequency oscillation included, exceeds 3 m / 3°. Both deviations are printed per direction |
 | `sim6` | Part 2, Simulation 6 | Observer robustness in a heavy sea, 1000 s |
-| `sim7` | Part 2, Simulation 7 | Your own demonstration — design it, explain it, discuss it |
+| `sim7` | Part 2, Simulation 7 | EKF station keeping for 400 s in the standard environment, without measurement noise. All North/East/heading measurements are unavailable for 200 <= t < 300 s; the EKF predicts without measurement correction during that interval |
 | `bonus` | Extra credit (3 points) | Fixed-wrench observer comparison and closed-loop station keeping with raw measurements, NPO and EKF, all with measurement noise on. Four paired report PDFs compare NPO (left) and EKF (right), independently of `SELECTED_OBSERVER`. All regular simulations run with noise off |
+
+Running `python run_case_part_2.py sim7` saves three PDFs in `output/pdf/sim7/`:
+`sim7_trajectory.pdf`, `sim7_actuator_usage.pdf` and `sim7_position_estimates.pdf`.
+The time plots shade the 200-300 s measurement outage. Actuator usage shows
+commanded/actual thrust as a percentage of each thruster's rated thrust, plus
+commanded/actual azimuth angles. The pose plot shows only truth (including waves)
+and the EKF LF estimate for North, East and heading. Missing measurements are
+logged as NaN; they are neither held constant nor replaced with simulated truth.
+The EKF continues propagating its state and covariance, and resumes measurement
+correction automatically at 300 s. This case explicitly selects EKF independently
+of `SELECTED_OBSERVER`.
 
 Running `python run_case_part_2.py bonus` (or `rc.bonus_sensor_noise()` in the demo notebook)
 saves four comparison PDFs in `output/pdf/sensor_noise/`, with NPO left and EKF right:
@@ -287,7 +298,7 @@ use `use_sensor_noise=True` and the same seeded environment and sensor noise lev
 
 **The two choices the runner leaves to you**, both at the top of `run_case_part_2.py`:
 
-- `SELECTED_OBSERVER` starts as `None`. Compare both observers in Part 2, Simulation 4, then set it to the one you chose and justify the choice in the report. Part 2, Simulations 5–7 use it explicitly, and stop with a message until you have set it. Simulation 4 and the sensor-noise comparison always run both observers.
+- `SELECTED_OBSERVER` starts as `None`. Compare both observers in Part 2, Simulation 4, then set it to the one you chose and justify the choice in the report. Part 2, Simulations 5–6 use it explicitly, and stop with a message until you have set it. Simulation 7 explicitly uses EKF. Simulation 4 and the sensor-noise comparison always run both observers.
 - `OBSERVER_OFFSET` is the initial observer error used by the convergence demonstration. The engine resets every observer at the true pose, so this is what gives the estimate something to converge from. The shipped value is an example: choose your own and say why it is a fair test.
 
 The environmental numbers are constants at the top of the same file. `notebooks/part_2_demo.ipynb` runs every preset with the report plots and all Part 2 checks.
@@ -367,6 +378,13 @@ Part 2 adds `simulation/plotter_part_2.py`, used the same way:
 | `plot_wrench_residual` | desired minus applied wrench |
 
 and `simulation.capability.plot_capability` draws the Part 2, Simulation 5 polar plots.
+
+Running `python run_case_part_2.py sim4` (or `rc.sim4()` in the notebook)
+automatically regenerates six report PDFs in `output/pdf/sim4/`: pose with
+waves, BODY velocities without waves, heading decomposition with fixed wrench
+and waves, offset-start convergence, station-keeping trajectory, and controller
+wrench. Every figure has NPO on the left and EKF on the right and uses the
+current observer tuning.
 
 ### Simulation numbering
 

@@ -69,7 +69,7 @@ class NonlinearPassiveObserver(Observer):
         zeta_desired=1.0,
         notch_factor=2.0,
         T_bias=(300.0, 300.0, 300.0),
-        k4=(8000.0, 8000.0, 1.5e6),
+        k4=(80000.0, 80000.0, 1.5e6),
         bias_gain_ratio=0.1,
     ):
 
@@ -253,16 +253,19 @@ class NonlinearPassiveObserver(Observer):
         eta_out = np.zeros(6)
         nu_out = np.zeros(6)
         bias_out = np.zeros(6)
+        wave_pose_out = np.zeros(6)
 
         eta_out[self.IDX] = self.eta
         nu_out[self.IDX] = self.nu
         bias_out[self.IDX] = self.bias
+        wave_pose_out[self.IDX] = self.Cw @ self.xi
 
-        # Return estimated position, velocity and bias
+        # Include wave motion so heading-decomposition plots can show it.
         return ObserverEstimate(
             eta=eta_out,
             nu=nu_out,
-            bias=bias_out
+            bias=bias_out,
+            wave_pose=wave_pose_out,
         )
 
 
@@ -287,6 +290,10 @@ class KalmanFilterObserver(Observer):
     Forward Euler for state, F_k = I + dt * df/dx for covariance,
     Q_k = dt * Q_c (white continuous-time process noise spectral density).
     Corrected covariance is updated using the Joseph form.
+
+    NaN pose components are unavailable measurements. Correction uses only
+    finite components; ``eta_measured=None`` or all missing components gives
+    a prediction-only step, including covariance propagation.
     """
 
     name = "kalman"
@@ -313,7 +320,7 @@ class KalmanFilterObserver(Observer):
 
         # Mass and dampening matrices
         self.M = np.array([
-            [6.007e5,       0,          0],
+            [6.007e5,       0,          0],g
             [0,        7.067e5,  -4.733e5],
             [0,       -5.712e5,   5.456e7]
         ])
@@ -414,13 +421,14 @@ class KalmanFilterObserver(Observer):
         return f, A
 
     def step(
-        self, t: float, dt: float, eta_measured: np.ndarray, tau_est: np.ndarray
+        self, t: float, dt: float, eta_measured: np.ndarray | None, tau_est: np.ndarray
     ) -> ObserverEstimate:
         dt = float(dt)
-        eta6 = np.asarray(eta_measured, dtype=float).reshape(6)
         tau6 = np.asarray(tau_est, dtype=float).reshape(6)
-        y = eta6[[0, 1, 5]]  # NED pose, measured. Not read measured velocity
+        y = (np.full(3, np.nan) if eta_measured is None else
+             np.asarray(eta_measured, dtype=float).reshape(6)[[0, 1, 5]])
         tau = tau6[[0, 1, 5]]  # BODY previous desired wrench (N,N,Nm)
+        available = np.isfinite(y)
 
         # 1) Nonlinear time update (explicit Euler), using tau_c[k-1].
         f, A = self._dynamics_and_jacobian(self.x, tau)
@@ -431,19 +439,26 @@ class KalmanFilterObserver(Observer):
         P_pred = F @ self.P @ F.T + self.Qk
         P_pred = 0.5 * (P_pred + P_pred.T)      # make sure that it is symmetric
 
-        # 2) Wrapped innovation, y_hat = eta_LF + eta_WF.
+        # 2) Wrapped innovation, y_hat = eta_LF + eta_WF. Missing channels
+        # remain NaN for diagnostics and never enter a matrix correction.
         innovation = y - self.H @ x_pred
-        innovation[2] = self._wrap(innovation[2])
-        S = self.H @ P_pred @ self.H.T + self.R
-        S = 0.5 * (S + S.T)
-        # K = P_pred H^T S^-1, solved as a 3x3 linear system.
-        K = np.linalg.solve(S, self.H @ P_pred).T
+        if available[2]:
+            innovation[2] = self._wrap(innovation[2])
 
-        # 3) Measurement correction.  Joseph form preserves covariance PSD.
-        self.x = x_pred + K @ innovation
+        # 3) Correct only when measurements exist. During an outage both
+        # state and covariance keep evolving under the model above.
+        self.x, self.P = x_pred, P_pred
+        if available.any():
+            H = self.H[available]
+            R = self.R[np.ix_(available, available)]
+            S = H @ P_pred @ H.T + R
+            S = 0.5 * (S + S.T)
+            K = np.linalg.solve(S, H @ P_pred).T
+            self.x = x_pred + K @ innovation[available]
+            # Joseph form preserves covariance PSD after correction.
+            IKH = self.I15 - K @ H
+            self.P = IKH @ P_pred @ IKH.T + K @ R @ K.T
         self.x[8] = self._wrap(self.x[8])
-        IKH = self.I15 - K @ self.H
-        self.P = IKH @ P_pred @ IKH.T + K @ self.R @ K.T
         self.P = 0.5 * (self.P + self.P.T)
         self.last_innovation = innovation.copy()
 

@@ -153,6 +153,29 @@ def plot_observer_velocity_comparison(npo, kalman, figsize=(12, 8)):
     return fig
 
 
+def plot_heading_decomposition_comparison(npo, kalman, figsize=(12, 4.5)):
+    """Fixed-wrench heading components with waves, NPO left and EKF right.
+
+    ``wave_pose_est`` already contains the output ``C_w @ xi`` from each
+    observer; its yaw component and both heading signals are logged in radians.
+    """
+    fig, axes = _observer_comparison_axes(
+        1, "Simulation 4: heading decomposition with fixed wrench and waves", figsize)
+    for col, logs in enumerate((npo, kalman)):
+        ax = axes[0, col]
+        ax.plot(logs.t, np.degrees(np.unwrap(logs.eta_est[:, 5])),
+                color="tab:blue", lw=1.3, label=r"$\hat\psi_{\mathrm{LF}}$")
+        ax.plot(logs.t, np.degrees(logs.wave_pose_est[:, 5]),
+                color="tab:orange", lw=1.0,
+                label=r"$C_{w,\psi}\hat\xi$ (yaw contribution)")
+        ax.plot(logs.t, np.degrees(np.unwrap(logs.eta_measured[:, 5])),
+                color="tab:green", lw=1.0, alpha=0.65, label=r"$\psi_m$")
+        ax.set_xlabel("Time [s]")
+        ax.set_ylabel("Heading [deg]")
+        ax.legend(loc="best", fontsize=8)
+    return fig
+
+
 def plot_observer_convergence_comparison(npo, kalman, figsize=(12, 8), window=30.0):
     """Offset-start pose errors, with a centred mean as an LF truth proxy.
 
@@ -383,7 +406,7 @@ def save_sensor_noise_comparison_plots(results, output_dir, *, residual_output_d
 
 
 def save_sim4_comparison_plots(results, output_dir):
-    """Create and overwrite the five report PDFs from one complete sim4 run.
+    """Create and overwrite the six report PDFs from one complete sim4 run.
 
     Paths are supplied by the runner so notebook working directories do not
     affect where the report figures are saved. Figures also remain open for
@@ -396,6 +419,8 @@ def save_sim4_comparison_plots(results, output_dir):
          results[("nonlinear_passive", "with waves")], results[("kalman", "with waves")]),
         ("sim4_velocity_without_waves.pdf", plot_observer_velocity_comparison,
          results[("nonlinear_passive", "without waves")], results[("kalman", "without waves")]),
+        ("sim4_heading_decomposition_comparison.pdf", plot_heading_decomposition_comparison,
+         results[("nonlinear_passive", "with waves")], results[("kalman", "with waves")]),
         ("sim4_offset_convergence.pdf", plot_observer_convergence_comparison,
          results[("nonlinear_passive", "offset start")], results[("kalman", "offset start")]),
         ("sim4_trajectory.pdf", plot_observer_trajectory_comparison,

@@ -102,6 +102,13 @@ class DPSimulatorPart2:
     ):
         if cfg.dt not in (0.01, 0.1):
             raise ValueError("Part 2 requires fixed dt=0.01 or dt=0.1 s")
+        if cfg.measurement_dropout is not None:
+            interval = np.asarray(cfg.measurement_dropout, dtype=float)
+            if (interval.shape != (2,) or not np.isfinite(interval).all()
+                    or not 0.0 <= interval[0] < interval[1] <= cfg.T):
+                raise ValueError("measurement_dropout must satisfy 0 <= start < stop <= T")
+            if not cfg.use_observer:
+                raise ValueError("Measurement dropout requires an observer that supports missing measurements")
         self.cfg = cfg
         self.controller = controller
         self.vessel = Gunnerus3DOF(cfg.dt, cfg.method, pkl_path)
@@ -164,6 +171,11 @@ class DPSimulatorPart2:
             eta = to_6dof(self.vessel.get_eta())
             nu = to_6dof(self.vessel.get_nu())
             eta_m, nu_m = self.sensors.measure(eta, nu)
+            if (cfg.measurement_dropout is not None
+                    and cfg.measurement_dropout[0] <= tk < cfg.measurement_dropout[1]):
+                # Missing GNSS and gyrocompass: never feed truth or stale samples
+                # back to the observer. NaN marks an unavailable measurement.
+                eta_m[[0, 1, 5]] = np.nan
             eta_h[k], nu_h[k] = eta, nu
             eta_mh[k], nu_mh[k] = eta_m, nu_m
 
