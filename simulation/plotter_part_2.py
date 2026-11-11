@@ -1,4 +1,6 @@
 """Plots specific to Part 2: observer, wind field, waves, thruster set-points."""
+from pathlib import Path
+
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -214,3 +216,78 @@ def plot_wrench_residual(logs, figsize=(11, 6)):
     fig.suptitle(r"Actuator wrench residual $r_\tau=\tau_d-\tau_{thr}$")
     fig.tight_layout()
     return fig
+
+
+def plot_station_keeping_trajectory_comparison(logs_raw, logs_observer,
+                                              observer_label="EKF", figsize=(11, 5.5)):
+    """Compare true horizontal trajectories using identical scales in both panels."""
+    fig, axes = plt.subplots(1, 2, figsize=figsize, sharex=True, sharey=True,
+                             layout="constrained")
+    positions = np.vstack((logs_raw.eta[:, :2], logs_observer.eta[:, :2],
+                           logs_raw.cmd[0, :2]))
+    lower, upper = positions.min(axis=0), positions.max(axis=0)
+    centre = (lower + upper) / 2.0
+    half_range = 0.55 * max(float(np.max(upper - lower)), 1.0)
+    for ax, logs, title in zip(axes, (logs_raw, logs_observer),
+                                ("Without observer", f"With {observer_label}")):
+        ax.plot(logs.eta[:, 1], logs.eta[:, 0], color="tab:blue", lw=0.9,
+                label="True trajectory")
+        ax.plot(logs.eta[0, 1], logs.eta[0, 0], "o", color="tab:green",
+                ms=7, mfc="none", label="Start")
+        ax.plot(logs.eta[-1, 1], logs.eta[-1, 0], "s", color="tab:red",
+                ms=5, label="End")
+        ax.plot(logs.cmd[0, 1], logs.cmd[0, 0], "kx", ms=9, mew=1.5,
+                label="Setpoint")
+        ax.set(xlabel="East [m]", ylabel="North [m]", title=title,
+               xlim=(centre[1] - half_range, centre[1] + half_range),
+               ylim=(centre[0] - half_range, centre[0] + half_range))
+        ax.set_aspect("equal", adjustable="box")
+        ax.grid(True, alpha=0.3)
+        ax.legend(loc="best", fontsize=8)
+    fig.suptitle(f"Simulation 4: station-keeping trajectories "
+                 f"({logs_raw.t[0]:g}-{logs_raw.t[-1]:g} s)", fontsize=13)
+    return fig
+
+
+def plot_station_keeping_wrench_comparison(logs_raw, logs_observer,
+                                          observer_label="EKF", figsize=(11, 7)):
+    """Compare desired BODY controller wrenches, with shared scales per component."""
+    fig, axes = plt.subplots(3, 2, figsize=figsize, sharex=True, sharey="row",
+                             layout="constrained")
+    for column, (logs, title) in enumerate(zip(
+            (logs_raw, logs_observer), ("Without observer", f"With {observer_label}"))):
+        for row, (idx, label) in enumerate(((0, "Fx [kN]"), (1, "Fy [kN]"),
+                                          (5, "Mz [kNm]"))):
+            ax = axes[row, column]
+            ax.plot(logs.t, logs.tau_d[:, idx] * 1e-3, color="tab:blue", lw=0.8)
+            ax.set_ylabel(label)
+            ax.set_xlim(logs_raw.t[0], logs_raw.t[-1])
+            ax.grid(True, alpha=0.3)
+        axes[0, column].set_title(title)
+        axes[-1, column].set_xlabel("Time [s]")
+    fig.suptitle("Simulation 4: station-keeping controller wrench (BODY)", fontsize=13)
+    return fig
+
+
+def save_station_keeping_comparison(logs_raw, logs_observer, output_dir,
+                                    observer_label="EKF"):
+    """Save both station-keeping comparison PDFs and keep the figures open."""
+    if not np.array_equal(logs_raw.t, logs_observer.t):
+        raise ValueError("Station-keeping comparisons require identical time samples.")
+    if not np.array_equal(logs_raw.cmd, logs_observer.cmd):
+        raise ValueError("Station-keeping comparisons require identical setpoints.")
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    paths = []
+    with plt.rc_context({"pdf.fonttype": 42}):
+        figures = (
+            ("sim4_station_keeping_trajectory_comparison.pdf",
+             plot_station_keeping_trajectory_comparison(logs_raw, logs_observer, observer_label)),
+            ("sim4_station_keeping_controller_wrench_comparison.pdf",
+             plot_station_keeping_wrench_comparison(logs_raw, logs_observer, observer_label)),
+        )
+        for filename, figure in figures:
+            path = output_dir / filename
+            figure.savefig(path, format="pdf", bbox_inches="tight")
+            paths.append(path)
+    return paths

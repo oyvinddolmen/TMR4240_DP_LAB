@@ -25,6 +25,7 @@ have set it.
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -36,7 +37,8 @@ from part_2.observer import select_observer
 from simulation.plotter_part_2 import (plot_heading_decomposition,
                                        plot_observer, plot_observer_error,
                                        plot_thruster_setpoints, plot_waves,
-                                       plot_wind_field, plot_wrench_residual)
+                                       plot_wind_field, plot_wrench_residual,
+                                       save_station_keeping_comparison)
 from part_2.reference import ReferenceModel
 from part_2.thrust_allocation import ThrustAllocator
 from models.waves import Waves
@@ -290,6 +292,12 @@ def sim4():
                        save_thrust_pdf=not use_obs)
         plt.gcf().suptitle(f"Closed loop — {label}")
         out[("closed loop", label)] = logs
+    save_station_keeping_comparison(
+        out[("closed loop", "raw measurements")],
+        out[("closed loop", f"observer {selected_observer()}")],
+        Path(__file__).resolve().parent / "output" / "pdf" / "sim4",
+        observer_label="EKF" if selected_observer() == "kalman" else "NPO",
+    )
     return out
 
 
